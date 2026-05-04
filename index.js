@@ -69,6 +69,41 @@ app.post('/picks', async (req, res) => {
     res.status(500).json({ error: 'Server error' })
   }
 })
+app.post('/picks', async (req, res) => {
+  try {
+    const { userId, sport, event, market, odds, stake, result, pnl } = req.body
+    const pick = await prisma.pick.create({
+      data: { userId, sport, event, market, odds, stake, result, pnl }
+    })
+    res.json(pick)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// UPDATE PICK RESULT
+app.put('/picks/:id', async (req, res) => {
+  try {
+    const { result, pnl } = req.body
+    const pick = await prisma.pick.update({
+      where: { id: req.params.id },
+      data: { result, pnl }
+    })
+    res.json(pick)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// DELETE PICK
+app.delete('/picks/:id', async (req, res) => {
+  try {
+    await prisma.pick.delete({ where: { id: req.params.id } })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
