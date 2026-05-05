@@ -104,7 +104,36 @@ app.delete('/picks/:id', async (req, res) => {
     res.status(500).json({ error: 'Server error' })
   }
 })
+// STRIPE
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 
+// CREATE SUBSCRIPTION CHECKOUT
+app.post('/create-checkout', async (req, res) => {
+  try {
+    const { tipsterUsername, priceAmount, userId } = req.body
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          product_data: {
+            name: `LEDGR — Subscribe to @${tipsterUsername}`,
+            description: `Monthly subscription to @${tipsterUsername} picks`
+          },
+          unit_amount: priceAmount * 100,
+          recurring: { interval: 'month' }
+        },
+        quantity: 1
+      }],
+      mode: 'subscription',
+      success_url: `https://getledgr.bet/dashboard?subscribed=true`,
+      cancel_url: `https://getledgr.bet/tipster?u=${tipsterUsername}`
+    })
+    res.json({ url: session.url })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`LEDGR API running on port ${PORT} 🚀`)
