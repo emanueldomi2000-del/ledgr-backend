@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
+require('./autoVerify')
 
 const app = express()
 const prisma = new PrismaClient()
