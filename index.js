@@ -135,6 +135,27 @@ app.post('/create-checkout', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+// GET FIXTURES FROM API-FOOTBALL
+app.get('/fixtures', async (req, res) => {
+  try {
+    const axios = require('axios')
+    const today = new Date().toISOString().split('T')[0]
+    const response = await axios.get('https://v3.football.api-sports.io/fixtures', {
+      headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
+      params: { date: today, status: 'NS-1H-2H' }
+    })
+    const fixtures = response.data.response.map(f => ({
+      id: f.fixture.id,
+      home: f.teams.home.name,
+      away: f.teams.away.name,
+      league: f.league.name,
+      time: new Date(f.fixture.date).toLocaleTimeString('en', {hour:'2-digit',minute:'2-digit'})
+    }))
+    res.json(fixtures)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`LEDGR API running on port ${PORT} 🚀`)
