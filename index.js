@@ -135,23 +135,47 @@ app.post('/create-checkout', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
-// GET FIXTURES FROM API-FOOTBALL
+// GET FIXTURES FROM THE ODDS API
 app.get('/fixtures', async (req, res) => {
   try {
     const axios = require('axios')
-    const today = new Date().toISOString().split('T')[0]
-    const response = await axios.get('https://v3.football.api-sports.io/fixtures', {
-      headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
-      params: { date: today, status: 'NS-1H-2H' }
-    })
-    const fixtures = response.data.response.map(f => ({
-      id: f.fixture.id,
-      home: f.teams.home.name,
-      away: f.teams.away.name,
-      league: f.league.name,
-      time: new Date(f.fixture.date).toLocaleTimeString('en', {hour:'2-digit',minute:'2-digit'})
-    }))
-    res.json(fixtures)
+    const sport = req.query.sport || 'Soccer'
+    
+    const sportMap = {
+      'Soccer': ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league'],
+      'Basketball': ['basketball_nba'],
+      'Football': ['americanfootball_nfl'],
+      'Baseball': ['baseball_mlb'],
+      'Tennis': ['tennis_atp_french_open'],
+      'MMA/Boxing': ['mma_mixed_martial_arts']
+    }
+
+    const leagues = sportMap[sport] || sportMap['Soccer']
+    let allFixtures = []
+
+    for (const league of leagues.slice(0, 3)) {
+      try {
+        const r = await axios.get(`https://api.the-odds-api.com/v4/sports/${league}/odds`, {
+          params: {
+            apiKey: process.env.ODDS_API_KEY,
+            regions: 'eu',
+            markets: 'h2h',
+            oddsFormat: 'decimal'
+          }
+        })
+        const fixtures = r.data.map(g => ({
+          id: g.id,
+          home: g.home_team,
+          away: g.away_team,
+          league: league.replace(/_/g,' ').toUpperCase(),
+          time: new Date(g.commence_time).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}),
+          date: new Date(g.commence_time).toLocaleDateString('en')
+        }))
+        allFixtures = allFixtures.concat(fixtures)
+      } catch(e) { continue }
+    }
+
+    res.json(allFixtures.slice(0, 50))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
