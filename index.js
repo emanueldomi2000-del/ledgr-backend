@@ -61,9 +61,9 @@ app.get('/picks', async (req, res) => {
 // ADD PICK
 app.post('/picks', async (req, res) => {
   try {
-    const { userId, sport, event, market, odds, stake, result, pnl } = req.body
+    const { userId, sport, event, fixtureId, homeTeam, awayTeam, market, odds, stake, result, pnl } = req.body
     const pick = await prisma.pick.create({
-      data: { userId, sport, event, market, odds, stake, result, pnl }
+      data: { userId, sport, event, fixtureId, homeTeam, awayTeam, market, odds, stake, result, pnl }
     })
     res.json(pick)
   } catch (err) {

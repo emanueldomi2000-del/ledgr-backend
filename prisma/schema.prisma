@@ -21,15 +21,18 @@ model User {
 }
 
 model Pick {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  sport     String
-  event     String
-  market    String
-  odds      Float
-  stake     Float
-  result    String   @default("pending")
-  pnl       Float    @default(0)
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  sport       String
+  event       String
+  fixtureId   String?
+  homeTeam    String?
+  awayTeam    String?
+  market      String
+  odds        Float
+  stake       Float
+  result      String   @default("pending")
+  pnl         Float    @default(0)
+  createdAt   DateTime @default(now())
 }
