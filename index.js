@@ -140,34 +140,41 @@ app.get('/fixtures', async (req, res) => {
   try {
     const axios = require('axios')
     const sport = req.query.sport || 'Soccer'
+    const dateOffset = parseInt(req.query.dateOffset) || 0
     
+    const date = new Date()
+    date.setDate(date.getDate() + dateOffset)
+    const dateStr = date.toISOString().split('T')[0]
+
     const sportMap = {
-      'Soccer': ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league'],
+      'Soccer': ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league','soccer_uefa_europa_league'],
       'Basketball': ['basketball_nba'],
       'Football': ['americanfootball_nfl'],
       'Baseball': ['baseball_mlb'],
-      'Tennis': ['tennis_atp_french_open'],
+      'Tennis': ['tennis_atp_french_open','tennis_wta_french_open'],
       'MMA/Boxing': ['mma_mixed_martial_arts']
     }
 
     const leagues = sportMap[sport] || sportMap['Soccer']
     let allFixtures = []
 
-    for (const league of leagues.slice(0, 3)) {
+    for (const league of leagues) {
       try {
         const r = await axios.get(`https://api.the-odds-api.com/v4/sports/${league}/odds`, {
           params: {
             apiKey: process.env.ODDS_API_KEY,
             regions: 'eu',
             markets: 'h2h',
-            oddsFormat: 'decimal'
+            oddsFormat: 'decimal',
+            commenceTimeFrom: dateStr+'T00:00:00Z',
+            commenceTimeTo: dateStr+'T23:59:59Z'
           }
         })
         const fixtures = r.data.map(g => ({
           id: g.id,
           home: g.home_team,
           away: g.away_team,
-          league: league.replace(/_/g,' ').toUpperCase(),
+          league: league.replace(/soccer_|basketball_|americanfootball_|baseball_|tennis_|mma_/g,'').replace(/_/g,' ').toUpperCase(),
           time: new Date(g.commence_time).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}),
           date: new Date(g.commence_time).toLocaleDateString('en')
         }))
@@ -175,9 +182,31 @@ app.get('/fixtures', async (req, res) => {
       } catch(e) { continue }
     }
 
-    res.json(allFixtures.slice(0, 50))
+    res.json(allFixtures)
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+})
+app.get('/players', async (req, res) => {
+  try {
+    const axios = require('axios')
+    const { fixtureId } = req.query
+    const r = await axios.get('https://v3.football.api-sports.io/fixtures/players', {
+      headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
+      params: { fixture: fixtureId }
+    })
+    const teams = r.data.response
+    if (!teams || !teams.length) return res.json({ home: [], away: [], homeGK: [], awayGK: [] })
+    const mapPlayers = (team) => team.players.map(p => p.player.name)
+    const mapGK = (team) => team.players.filter(p => p.statistics[0]?.games?.position === 'G').map(p => p.player.name)
+    res.json({
+      home: mapPlayers(teams[0]),
+      away: mapPlayers(teams[1]),
+      homeGK: mapGK(teams[0]),
+      awayGK: mapGK(teams[1])
+    })
+  } catch (err) {
+    res.json({ home: [], away: [], homeGK: [], awayGK: [] })
   }
 })
 const PORT = process.env.PORT || 3000
