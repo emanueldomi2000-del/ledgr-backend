@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LEDGR — Home</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #07070f;
+      --surface:  #0f0f1a;
+      --card:     #14141f;
+      --border:   #1e1e30;
+      --accent:   #6c63ff;
+      --green:    #00d48a;
+      --red:      #ff4d6d;
+      --gold:     #f5c842;
+      --silver:   #b0b8c8;
+      --bronze:   #cd7f32;
+      --text:     #e8e8f0;
+      --muted:    #6b6b8a;
+      --radius:   12px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    /* ── NAV ────────────────────────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(7,7,15,.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 60px;
+    }
+
+    .nav-logo {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -.5px;
+      background: linear-gradient(135deg, var(--accent), var(--green));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: .875rem;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 8px;
+      transition: color .15s, background .15s;
+    }
+
+    .nav-links a:hover { color: var(--text); background: var(--border); }
+    .nav-links a.active { color: var(--text); background: var(--surface); }
+
+    .nav-user {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .nav-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--green));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .75rem;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .nav-username {
+      font-size: .875rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: .75rem;
+      padding: 5px 12px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+
+    .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+    /* ── LAYOUT ─────────────────────────────────────────────── */
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    /* ── WELCOME BANNER ─────────────────────────────────────── */
+    .welcome-banner {
+      background: linear-gradient(135deg, #0f0f20 0%, #1a1040 50%, #0f1a20 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 36px;
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .welcome-banner::before {
+      content: '';
+      position: absolute;
+      top: -80px;
+      right: -80px;
+      width: 260px;
+      height: 260px;
+      background: radial-gradient(circle, rgba(108,99,255,.18) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .welcome-banner::after {
+      content: '';
+      position: absolute;
+      bottom: -60px;
+      left: 30%;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(0,212,138,.1) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .greeting {
+      font-size: .8125rem;
+      color: var(--muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 6px;
+    }
+
+    .welcome-name {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -.5px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .welcome-name span {
+      background: linear-gradient(135deg, var(--accent), var(--green));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .welcome-sub {
+      color: var(--muted);
+      font-size: .9375rem;
+    }
+
+    /* ── SECTION LABEL ──────────────────────────────────────── */
+    .section-label {
+      font-size: .6875rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    /* ── STATS GRID ─────────────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+
+    @media (max-width: 768px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 480px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+    }
+
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s;
+    }
+
+    .stat-card:hover { border-color: var(--accent); }
+
+    .stat-card .icon {
+      font-size: 1.25rem;
+      margin-bottom: 10px;
+      display: block;
+    }
+
+    .stat-label {
+      font-size: .75rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      margin-bottom: 4px;
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -.5px;
+      color: var(--text);
+    }
+
+    .stat-value.positive { color: var(--green); }
+    .stat-value.negative { color: var(--red); }
+
+    .stat-sub {
+      font-size: .75rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── MAIN GRID ──────────────────────────────────────────── */
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 20px;
+      align-items: start;
+    }
+
+    @media (max-width: 900px) {
+      .content-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── CARD WRAPPER ───────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: .9375rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .card-badge {
+      font-size: .6875rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 99px;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    /* ── PICKS FEED ─────────────────────────────────────────── */
+    .picks-feed { display: flex; flex-direction: column; }
+
+    .pick-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: background .15s;
+    }
+
+    .pick-item:last-child { border-bottom: none; }
+    .pick-item:hover { background: rgba(255,255,255,.025); }
+
+    .pick-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--green));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .75rem;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .pick-body { flex: 1; min-width: 0; }
+
+    .pick-user {
+      font-size: .8125rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .pick-event {
+      font-size: .8125rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 1px;
+    }
+
+    .pick-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      font-size: .6875rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .tag.sport { border-color: rgba(108,99,255,.4); color: #a09aff; }
+    .tag.odds  { border-color: rgba(245,200,66,.3); color: var(--gold); }
+
+    .pick-result {
+      font-size: .8125rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 6px;
+      flex-shrink: 0;
+      align-self: flex-start;
+    }
+
+    .pick-result.win  { background: rgba(0,212,138,.12); color: var(--green); }
+    .pick-result.loss { background: rgba(255,77,109,.12); color: var(--red); }
+    .pick-result.push { background: rgba(176,184,200,.08); color: var(--muted); }
+    .pick-result.pending { background: rgba(108,99,255,.1); color: #a09aff; }
+
+    .pick-time {
+      font-size: .6875rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ── SIDEBAR ────────────────────────────────────────────── */
+    .sidebar { display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── LEADERBOARD ────────────────────────────────────────── */
+    .lb-list { display: flex; flex-direction: column; }
+
+    .lb-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      transition: background .15s;
+    }
+
+    .lb-item:last-child { border-bottom: none; }
+    .lb-item:hover { background: rgba(255,255,255,.025); }
+
+    .lb-rank {
+      font-size: .875rem;
+      font-weight: 800;
+      width: 20px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .lb-rank.r1 { color: var(--gold); }
+    .lb-rank.r2 { color: var(--silver); }
+    .lb-rank.r3 { color: var(--bronze); }
+
+    .lb-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .75rem;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .lb-info { flex: 1; min-width: 0; }
+
+    .lb-username {
+      font-size: .875rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .lb-sub {
+      font-size: .75rem;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    .lb-roi {
+      font-size: .9375rem;
+      font-weight: 800;
+    }
+
+    .lb-roi.positive { color: var(--green); }
+    .lb-roi.negative { color: var(--red); }
+
+    /* ── RISING STARS ───────────────────────────────────────── */
+    .star-list { display: flex; flex-direction: column; }
+
+    .star-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 18px;
+      border-bottom: 1px solid var(--border);
+      transition: background .15s;
+    }
+
+    .star-item:last-child { border-bottom: none; }
+    .star-item:hover { background: rgba(255,255,255,.025); }
+
+    .star-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .7rem;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .star-info { flex: 1; min-width: 0; }
+
+    .star-username {
+      font-size: .8125rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .star-sub {
+      font-size: .6875rem;
+      color: var(--muted);
+    }
+
+    .star-streak {
+      font-size: .75rem;
+      font-weight: 700;
+      color: var(--gold);
+      white-space: nowrap;
+    }
+
+    /* ── EMPTY STATE ────────────────────────────────────────── */
+    .empty {
+      padding: 36px 20px;
+      text-align: center;
+      color: var(--muted);
+      font-size: .875rem;
+    }
+
+    /* ── SKELETON LOADER ────────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 6px;
+      height: 14px;
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .skeleton-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .skeleton-row:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="/home">LEDGR</a>
+
+  <ul class="nav-links">
+    <li><a href="/home" class="active">Home</a></li>
+    <li><a href="/leaderboard">Leaderboard</a></li>
+    <li><a href="/compare">Compare</a></li>
+    <li><a href="/simulator">Simulator</a></li>
+    <li><a href="/dashboard">Dashboard</a></li>
+  </ul>
+
+  <div class="nav-user">
+    <div class="nav-avatar" id="navAvatar">?</div>
+    <span class="nav-username" id="navUsername">…</span>
+    <button class="btn-ghost" onclick="logout()">Logout</button>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main>
+
+  <!-- WELCOME BANNER -->
+  <div class="welcome-banner">
+    <p class="greeting" id="greeting">Good evening</p>
+    <h1 class="welcome-name">Welcome back, <span id="welcomeName">…</span></h1>
+    <p class="welcome-sub" id="welcomeSub">Loading your stats…</p>
+  </div>
+
+  <!-- QUICK STATS -->
+  <p class="section-label">Your Stats</p>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <span class="icon">🎯</span>
+      <p class="stat-label">Total Picks</p>
+      <p class="stat-value" id="statPicks">—</p>
+      <p class="stat-sub" id="statPicksSub"></p>
+    </div>
+    <div class="stat-card">
+      <span class="icon">📈</span>
+      <p class="stat-label">ROI</p>
+      <p class="stat-value" id="statROI">—</p>
+      <p class="stat-sub">Return on investment</p>
+    </div>
+    <div class="stat-card">
+      <span class="icon">🏆</span>
+      <p class="stat-label">Win Rate</p>
+      <p class="stat-value" id="statWR">—</p>
+      <p class="stat-sub" id="statWRSub"></p>
+    </div>
+    <div class="stat-card">
+      <span class="icon">💰</span>
+      <p class="stat-label">Total PnL</p>
+      <p class="stat-value" id="statPnL">—</p>
+      <p class="stat-sub">Profit / Loss</p>
+    </div>
+  </div>
+
+  <!-- CONTENT GRID -->
+  <div class="content-grid">
+
+    <!-- RECENT PICKS FEED -->
+    <div>
+      <p class="section-label">Recent Activity</p>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Latest Picks</span>
+          <span class="card-badge" id="feedBadge">Loading…</span>
+        </div>
+        <div class="picks-feed" id="picksFeed">
+          <!-- skeleton -->
+          <div class="skeleton-row"><div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div></div>
+          <div class="skeleton-row"><div class="skeleton" style="width:35%"></div><div class="skeleton" style="width:60%"></div></div>
+          <div class="skeleton-row"><div class="skeleton" style="width:45%"></div><div class="skeleton" style="width:75%"></div></div>
+          <div class="skeleton-row"><div class="skeleton" style="width:38%"></div><div class="skeleton" style="width:65%"></div></div>
+          <div class="skeleton-row"><div class="skeleton" style="width:42%"></div><div class="skeleton" style="width:68%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+
+      <!-- MINI LEADERBOARD -->
+      <div>
+        <p class="section-label">Top Tipsters</p>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Leaderboard</span>
+            <span class="card-badge">Top 3</span>
+          </div>
+          <div class="lb-list" id="leaderboard">
+            <div class="skeleton-row"><div class="skeleton" style="width:80%"></div></div>
+            <div class="skeleton-row"><div class="skeleton" style="width:75%"></div></div>
+            <div class="skeleton-row"><div class="skeleton" style="width:70%"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RISING STARS -->
+      <div>
+        <p class="section-label">Rising Stars</p>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Hot This Week</span>
+            <span class="card-badge">7 days</span>
+          </div>
+          <div class="star-list" id="risingStars">
+            <div class="skeleton-row"><div class="skeleton" style="width:65%"></div></div>
+            <div class="skeleton-row"><div class="skeleton" style="width:60%"></div></div>
+            <div class="skeleton-row"><div class="skeleton" style="width:70%"></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+  </div><!-- /content-grid -->
+</main>
+
+<script>
+  const API = 'https://ledgr-backend-production-c132.up.railway.app'
+
+  // ── AUTH CHECK ───────────────────────────────────────────────
+  const token = localStorage.getItem('token')
+  const userRaw = localStorage.getItem('user')
+
+  if (!token || !userRaw) {
+    window.location.href = '/login'
+  }
+
+  const currentUser = JSON.parse(userRaw)
+
+  // ── GREETING ─────────────────────────────────────────────────
+  function setGreeting() {
+    const h = new Date().getHours()
+    const g = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+    document.getElementById('greeting').textContent = g
+  }
+
+  // ── INIT UI ──────────────────────────────────────────────────
+  function initUI() {
+    setGreeting()
+    const name = currentUser.username || 'Anonymous'
+    document.getElementById('welcomeName').textContent = '@' + name
+    document.getElementById('navUsername').textContent = '@' + name
+    document.getElementById('navAvatar').textContent = name[0].toUpperCase()
+  }
+
+  // ── HELPERS ──────────────────────────────────────────────────
+  function avatarGradient(username) {
+    const hues = [240, 160, 280, 340, 30, 200, 120]
+    let h = 0
+    for (const c of username) h = (h + c.charCodeAt(0)) % hues.length
+    const deg = hues[h]
+    return `linear-gradient(135deg, hsl(${deg},70%,45%), hsl(${(deg+60)%360},70%,55%))`
+  }
+
+  function fmtTime(iso) {
+    const d = new Date(iso)
+    const now = new Date()
+    const diff = (now - d) / 1000
+    if (diff < 60) return 'just now'
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`
+    return `${Math.floor(diff/86400)}d ago`
+  }
+
+  function fmtPct(n) {
+    return (n >= 0 ? '+' : '') + n.toFixed(1) + '%'
+  }
+
+  function resultClass(r) {
+    if (!r) return 'pending'
+    const lower = r.toLowerCase()
+    if (lower === 'win' || lower === 'won') return 'win'
+    if (lower === 'loss' || lower === 'lose' || lower === 'lost') return 'loss'
+    if (lower === 'push' || lower === 'void' || lower === 'nb') return 'push'
+    return 'pending'
+  }
+
+  function resultLabel(r) {
+    if (!r) return 'Pending'
+    const map = { win: 'WIN', won: 'WIN', loss: 'LOSS', lose: 'LOSS', lost: 'LOSS', push: 'PUSH', void: 'VOID', nb: 'N/B' }
+    return map[r.toLowerCase()] || r.toUpperCase()
+  }
+
+  // ── COMPUTE STATS ─────────────────────────────────────────────
+  function computeUserStats(picks, userId) {
+    const mine = picks.filter(p => p.userId === userId)
+    const settled = mine.filter(p => p.result)
+    const wins = settled.filter(p => resultClass(p.result) === 'win').length
+    const winRate = settled.length ? (wins / settled.length) * 100 : 0
+    const totalStake = mine.reduce((s, p) => s + (p.stake || 0), 0)
+    const totalPnL = mine.reduce((s, p) => s + (p.pnl || 0), 0)
+    const roi = totalStake > 0 ? (totalPnL / totalStake) * 100 : 0
+    return { total: mine.length, settled: settled.length, wins, winRate, roi, totalPnL }
+  }
+
+  // ── COMPUTE LEADERBOARD ───────────────────────────────────────
+  function computeLeaderboard(picks) {
+    const byUser = {}
+    for (const p of picks) {
+      const u = p.user?.username || 'Unknown'
+      if (!byUser[u]) byUser[u] = { username: u, picks: [], stake: 0, pnl: 0 }
+      byUser[u].picks.push(p)
+      byUser[u].stake += p.stake || 0
+      byUser[u].pnl   += p.pnl   || 0
+    }
+    return Object.values(byUser)
+      .filter(u => u.picks.length >= 3)
+      .map(u => {
+        const settled = u.picks.filter(p => p.result)
+        const wins = settled.filter(p => resultClass(p.result) === 'win').length
+        const winRate = settled.length ? (wins / settled.length) * 100 : 0
+        const roi = u.stake > 0 ? (u.pnl / u.stake) * 100 : 0
+        return { username: u.username, picks: u.picks.length, roi, winRate, pnl: u.pnl }
+      })
+      .sort((a, b) => b.roi - a.roi)
+      .slice(0, 3)
+  }
+
+  // ── COMPUTE RISING STARS (last 7 days) ───────────────────────
+  function computeRisingStars(picks) {
+    const cutoff = Date.now() - 7 * 86400 * 1000
+    const recent = picks.filter(p => new Date(p.createdAt) >= cutoff)
+
+    const byUser = {}
+    for (const p of recent) {
+      const u = p.user?.username || 'Unknown'
+      if (!byUser[u]) byUser[u] = { username: u, picks: [] }
+      byUser[u].picks.push(p)
+    }
+
+    return Object.values(byUser)
+      .filter(u => u.picks.length >= 2)
+      .map(u => {
+        const settled = u.picks.filter(p => p.result && resultClass(p.result) !== 'push')
+        let streak = 0
+        for (let i = settled.length - 1; i >= 0; i--) {
+          if (resultClass(settled[i].result) === 'win') streak++
+          else break
+        }
+        const wins = settled.filter(p => resultClass(p.result) === 'win').length
+        const wr = settled.length ? (wins / settled.length) * 100 : 0
+        return { username: u.username, picks: u.picks.length, streak, winRate: wr }
+      })
+      .sort((a, b) => b.streak - a.streak || b.winRate - a.winRate)
+      .slice(0, 4)
+  }
+
+  // ── RENDER PICKS FEED ─────────────────────────────────────────
+  function renderFeed(picks) {
+    const feed = document.getElementById('picksFeed')
+    const badge = document.getElementById('feedBadge')
+
+    const top = picks.slice(0, 12)
+    badge.textContent = `${picks.length} total`
+
+    if (!top.length) {
+      feed.innerHTML = '<p class="empty">No picks yet. Be the first!</p>'
+      return
+    }
+
+    feed.innerHTML = top.map(p => {
+      const u = p.user?.username || 'Unknown'
+      const rc = resultClass(p.result)
+      return `
+        <div class="pick-item">
+          <div class="pick-avatar" style="background:${avatarGradient(u)}">${u[0].toUpperCase()}</div>
+          <div class="pick-body">
+            <span class="pick-user">@${u}</span>
+            <p class="pick-event">${p.homeTeam && p.awayTeam ? p.homeTeam + ' vs ' + p.awayTeam : (p.event || 'Unknown match')}</p>
+            <div class="pick-meta">
+              ${p.sport ? `<span class="tag sport">${p.sport}</span>` : ''}
+              <span class="tag">${p.market || 'Pick'}</span>
+              ${p.odds ? `<span class="tag odds">@${Number(p.odds).toFixed(2)}</span>` : ''}
+              <span class="pick-time">${fmtTime(p.createdAt)}</span>
+            </div>
+          </div>
+          <span class="pick-result ${rc}">${resultLabel(p.result)}</span>
+        </div>`
+    }).join('')
+  }
+
+  // ── RENDER LEADERBOARD ────────────────────────────────────────
+  function renderLeaderboard(entries) {
+    const el = document.getElementById('leaderboard')
+
+    if (!entries.length) {
+      el.innerHTML = '<p class="empty">Not enough data yet.</p>'
+      return
+    }
+
+    const rankClass = ['r1','r2','r3']
+    const medal = ['🥇','🥈','🥉']
+
+    el.innerHTML = entries.map((e, i) => `
+      <div class="lb-item">
+        <span class="lb-rank ${rankClass[i]}">${medal[i]}</span>
+        <div class="lb-avatar" style="background:${avatarGradient(e.username)}">${e.username[0].toUpperCase()}</div>
+        <div class="lb-info">
+          <p class="lb-username">@${e.username}</p>
+          <p class="lb-sub">${e.picks} picks · ${e.winRate.toFixed(0)}% WR</p>
+        </div>
+        <span class="lb-roi ${e.roi >= 0 ? 'positive' : 'negative'}">${fmtPct(e.roi)}</span>
+      </div>
+    `).join('')
+  }
+
+  // ── RENDER RISING STARS ───────────────────────────────────────
+  function renderRisingStars(stars) {
+    const el = document.getElementById('risingStars')
+
+    if (!stars.length) {
+      el.innerHTML = '<p class="empty">No activity this week yet.</p>'
+      return
+    }
+
+    el.innerHTML = stars.map(s => `
+      <div class="star-item">
+        <div class="star-avatar" style="background:${avatarGradient(s.username)}">${s.username[0].toUpperCase()}</div>
+        <div class="star-info">
+          <p class="star-username">@${s.username}</p>
+          <p class="star-sub">${s.picks} picks this week · ${s.winRate.toFixed(0)}% WR</p>
+        </div>
+        ${s.streak >= 2 ? `<span class="star-streak">🔥 ${s.streak}W</span>` : ''}
+      </div>
+    `).join('')
+  }
+
+  // ── RENDER USER STATS ─────────────────────────────────────────
+  function renderStats(stats) {
+    const pnlEl  = document.getElementById('statPnL')
+    const roiEl  = document.getElementById('statROI')
+
+    document.getElementById('statPicks').textContent = stats.total
+    document.getElementById('statPicksSub').textContent = `${stats.settled} settled`
+    document.getElementById('statWR').textContent = stats.total ? stats.winRate.toFixed(1) + '%' : '—'
+    document.getElementById('statWRSub').textContent = stats.settled ? `${stats.wins}W / ${stats.settled - stats.wins}L` : 'No settled picks yet'
+
+    roiEl.textContent = stats.total ? fmtPct(stats.roi) : '—'
+    roiEl.className = 'stat-value ' + (stats.roi >= 0 ? 'positive' : 'negative')
+
+    const sign = stats.totalPnL >= 0 ? '+' : ''
+    pnlEl.textContent = stats.total ? sign + stats.totalPnL.toFixed(2) + ' u' : '—'
+    pnlEl.className = 'stat-value ' + (stats.totalPnL >= 0 ? 'positive' : 'negative')
+
+    const sub = stats.total
+      ? `${stats.wins} wins out of ${stats.settled} settled picks`
+      : 'Add your first pick to get started'
+    document.getElementById('welcomeSub').textContent = sub
+  }
+
+  // ── LOGOUT ────────────────────────────────────────────────────
+  function logout() {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    window.location.href = '/login'
+  }
+
+  // ── MAIN LOAD ─────────────────────────────────────────────────
+  async function load() {
+    initUI()
+
+    try {
+      const res = await fetch(`${API}/picks`)
+      if (!res.ok) throw new Error('Failed to fetch picks')
+      const picks = await res.json()
+
+      const stats = computeUserStats(picks, currentUser.id)
+      renderStats(stats)
+      renderFeed(picks)
+      renderLeaderboard(computeLeaderboard(picks))
+      renderRisingStars(computeRisingStars(picks))
+    } catch (err) {
+      console.error(err)
+      document.getElementById('picksFeed').innerHTML =
+        '<p class="empty">Could not load picks. Try refreshing.</p>'
+      document.getElementById('leaderboard').innerHTML =
+        '<p class="empty">Could not load data.</p>'
+      document.getElementById('risingStars').innerHTML =
+        '<p class="empty">Could not load data.</p>'
+      document.getElementById('welcomeSub').textContent = 'Could not load your stats.'
+    }
+  }
+
+  load()
+</script>
+</body>
+</html>
