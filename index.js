@@ -190,20 +190,37 @@ app.get('/fixtures', async (req, res) => {
 app.get('/players', async (req, res) => {
   try {
     const axios = require('axios')
-    const { fixtureId } = req.query
-    const r = await axios.get('https://v3.football.api-sports.io/fixtures/players', {
-      headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
-      params: { fixture: fixtureId }
-    })
-    const teams = r.data.response
-    if (!teams || !teams.length) return res.json({ home: [], away: [], homeGK: [], awayGK: [] })
-    const mapPlayers = (team) => team.players.map(p => p.player.name)
-    const mapGK = (team) => team.players.filter(p => p.statistics[0]?.games?.position === 'G').map(p => p.player.name)
+    const { homeTeam, awayTeam } = req.query
+    
+    async function getTeamPlayers(teamName) {
+      const search = await axios.get('https://v3.football.api-sports.io/teams', {
+        headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
+        params: { name: teamName }
+      })
+      const team = search.data.response[0]
+      if (!team) return { all: [], gk: [] }
+      
+      const players = await axios.get('https://v3.football.api-sports.io/players/squads', {
+        headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
+        params: { team: team.team.id }
+      })
+      
+      const squad = players.data.response[0]?.players || []
+      const all = squad.map(p => p.name)
+      const gk = squad.filter(p => p.position === 'Goalkeeper').map(p => p.name)
+      return { all, gk }
+    }
+
+    const [home, away] = await Promise.all([
+      getTeamPlayers(homeTeam),
+      getTeamPlayers(awayTeam)
+    ])
+
     res.json({
-      home: mapPlayers(teams[0]),
-      away: mapPlayers(teams[1]),
-      homeGK: mapGK(teams[0]),
-      awayGK: mapGK(teams[1])
+      home: home.all,
+      away: away.all,
+      homeGK: home.gk,
+      awayGK: away.gk
     })
   } catch (err) {
     res.json({ home: [], away: [], homeGK: [], awayGK: [] })
