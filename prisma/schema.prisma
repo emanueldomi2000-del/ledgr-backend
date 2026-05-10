@@ -14,6 +14,7 @@ model User {
   username  String   @unique
   password  String
   role      String   @default("user")
+  elo       Int      @default(1000)
   createdAt DateTime @default(now())
   picks     Pick[]
 }
@@ -35,5 +36,7 @@ model Pick {
   pnl         Float    @default(0)
   confidence  String?
   reasoning   String?
+  eloChange   Int?
+  eloAfter    Int?
   createdAt   DateTime @default(now())
 }
