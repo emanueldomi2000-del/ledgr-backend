@@ -1,5 +1,3 @@
-
-
 const express = require('express')
 const cors = require('cors')
 const bcrypt = require('bcryptjs')
@@ -14,12 +12,12 @@ const prisma = new PrismaClient()
 app.use(cors())
 app.use(express.json())
 
-// TEST ROUTE
+// HEALTH CHECK
 app.get('/', (req, res) => {
   res.json({ message: 'LEDGR API is live! 🔥' })
 })
 
-// REGISTER
+// ── AUTH ──────────────────────────────────────────────────────
 app.post('/auth/register', async (req, res) => {
   try {
     const { email, username, password } = req.body
@@ -30,11 +28,10 @@ app.post('/auth/register', async (req, res) => {
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET)
     res.json({ token, user: { id: user.id, email, username } })
   } catch (err) {
-    res.status(400).json({ error: 'User already exists' })
+    res.status(400).json({ error: 'User already exists or invalid data' })
   }
 })
 
-// LOGIN
 app.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -49,46 +46,64 @@ app.post('/auth/login', async (req, res) => {
   }
 })
 
-// GET ALL PICKS
+// ── PICKS ─────────────────────────────────────────────────────
 app.get('/picks', async (req, res) => {
-  const picks = await prisma.pick.findMany({
-    include: { user: { select: { username: true } } },
-    orderBy: { createdAt: 'desc' }
-  })
-  res.json(picks)
-})
-
-// ADD PICK
-app.post('/picks', async (req, res) => {
   try {
-    const { userId, sport, event, fixtureId, homeTeam, awayTeam, market, odds, stake, result, pnl } = req.body
-    const pick = await prisma.pick.create({
-      data: { userId, sport, event, fixtureId, homeTeam, awayTeam, market, odds, stake, result, pnl }
+    const picks = await prisma.pick.findMany({
+      include: { user: { select: { username: true } } },
+      orderBy: { createdAt: 'desc' }
     })
-    res.json(pick)
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' })
-  }
-})
-app.post('/picks', async (req, res) => {
-  try {
-    const { userId, sport, event, market, odds, stake, result, pnl } = req.body
-    const pick = await prisma.pick.create({
-      data: { userId, sport, event, market, odds, stake, result, pnl }
-    })
-    res.json(pick)
+    res.json(picks)
   } catch (err) {
     res.status(500).json({ error: 'Server error' })
   }
 })
 
-// UPDATE PICK RESULT
+// POST PICK — single clean version with all fields
+app.post('/picks', async (req, res) => {
+  try {
+    const {
+      userId, sport, event, fixtureId,
+      homeTeam, awayTeam, market, odds, stake,
+      result, pnl, stakeType, confidence, reasoning
+    } = req.body
+
+    if (!userId || !event || !market || !odds || !stake) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+
+    const pick = await prisma.pick.create({
+      data: {
+        userId,
+        sport: sport || 'Soccer',
+        event,
+        fixtureId: fixtureId || null,
+        homeTeam: homeTeam || null,
+        awayTeam: awayTeam || null,
+        market,
+        odds: parseFloat(odds),
+        stake: parseFloat(stake),
+        result: result || 'pending',
+        pnl: parseFloat(pnl) || 0,
+        stakeType: stakeType || 'units',
+        confidence: confidence || null,
+        reasoning: reasoning || null
+      }
+    })
+    res.json(pick)
+  } catch (err) {
+    console.error('POST /picks error:', err.message)
+    res.status(500).json({ error: 'Server error: ' + err.message })
+  }
+})
+
+// UPDATE PICK RESULT (for manual override — admin only)
 app.put('/picks/:id', async (req, res) => {
   try {
     const { result, pnl } = req.body
     const pick = await prisma.pick.update({
       where: { id: req.params.id },
-      data: { result, pnl }
+      data: { result, pnl: parseFloat(pnl) }
     })
     res.json(pick)
   } catch (err) {
@@ -96,19 +111,111 @@ app.put('/picks/:id', async (req, res) => {
   }
 })
 
-// DELETE PICK
-app.delete('/picks/:id', async (req, res) => {
+// NOTE: DELETE pick is intentionally removed to preserve trust
+// Picks cannot be deleted after posting — this is core to LEDGR's verified system
+
+// ── FIXTURES (The Odds API) ───────────────────────────────────
+app.get('/fixtures', async (req, res) => {
   try {
-    await prisma.pick.delete({ where: { id: req.params.id } })
-    res.json({ success: true })
+    const axios = require('axios')
+    const sport = req.query.sport || 'Soccer'
+    const dateOffset = parseInt(req.query.dateOffset) || 0
+
+    const date = new Date()
+    date.setDate(date.getDate() + dateOffset)
+    const dateStr = date.toISOString().split('T')[0]
+
+    const sportMap = {
+      'Soccer': [
+        'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
+        'soccer_germany_bundesliga', 'soccer_france_ligue_one',
+        'soccer_uefa_champs_league', 'soccer_uefa_europa_league'
+      ],
+      'Basketball': ['basketball_nba'],
+      'Football': ['americanfootball_nfl'],
+      'Baseball': ['baseball_mlb'],
+      'Tennis': ['tennis_atp_french_open', 'tennis_wta_french_open'],
+      'MMA/Boxing': ['mma_mixed_martial_arts']
+    }
+
+    const leagues = sportMap[sport] || sportMap['Soccer']
+    let allFixtures = []
+
+    for (const league of leagues) {
+      try {
+        const r = await axios.get(`https://api.the-odds-api.com/v4/sports/${league}/odds`, {
+          params: {
+            apiKey: process.env.ODDS_API_KEY,
+            regions: 'eu',
+            markets: 'h2h',
+            oddsFormat: 'decimal',
+            commenceTimeFrom: dateStr + 'T00:00:00Z',
+            commenceTimeTo: dateStr + 'T23:59:59Z'
+          }
+        })
+        const fixtures = r.data.map(g => ({
+          id: g.id,
+          home: g.home_team,
+          away: g.away_team,
+          league: league
+            .replace(/soccer_|basketball_|americanfootball_|baseball_|tennis_|mma_/g, '')
+            .replace(/_/g, ' ')
+            .toUpperCase(),
+          time: new Date(g.commence_time).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' }),
+          date: new Date(g.commence_time).toLocaleDateString('en')
+        }))
+        allFixtures = allFixtures.concat(fixtures)
+      } catch (e) {
+        continue
+      }
+    }
+
+    res.json(allFixtures)
   } catch (err) {
-    res.status(500).json({ error: 'Server error' })
+    res.status(500).json({ error: err.message })
   }
 })
-// STRIPE
+
+// ── PLAYERS (API-Football) ────────────────────────────────────
+app.get('/players', async (req, res) => {
+  try {
+    const axios = require('axios')
+    const { homeTeam, awayTeam } = req.query
+
+    async function getTeamPlayers(teamName) {
+      const search = await axios.get('https://v3.football.api-sports.io/teams', {
+        headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
+        params: { name: teamName }
+      })
+      const team = search.data.response[0]
+      if (!team) return { all: [], gk: [] }
+
+      const players = await axios.get('https://v3.football.api-sports.io/players/squads', {
+        headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
+        params: { team: team.team.id }
+      })
+
+      const squad = players.data.response[0]?.players || []
+      return {
+        all: squad.filter(p => p.position !== 'Goalkeeper').map(p => p.name),
+        gk: squad.filter(p => p.position === 'Goalkeeper').map(p => p.name)
+      }
+    }
+
+    const [home, away] = await Promise.all([
+      getTeamPlayers(homeTeam),
+      getTeamPlayers(awayTeam)
+    ])
+
+    res.json({ home: home.all, away: away.all, homeGK: home.gk, awayGK: away.gk })
+  } catch (err) {
+    res.json({ home: [], away: [], homeGK: [], awayGK: [] })
+  }
+})
+
+// ── STRIPE ────────────────────────────────────────────────────
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder')
 
-// CREATE SUBSCRIPTION CHECKOUT
 app.post('/create-checkout', async (req, res) => {
   try {
     const { tipsterUsername, priceAmount, userId } = req.body
@@ -127,7 +234,7 @@ app.post('/create-checkout', async (req, res) => {
         quantity: 1
       }],
       mode: 'subscription',
-      success_url: `https://getledgr.bet/dashboard?subscribed=true`,
+      success_url: `https://getledgr.bet/home?subscribed=true`,
       cancel_url: `https://getledgr.bet/tipster?u=${tipsterUsername}`
     })
     res.json({ url: session.url })
@@ -135,99 +242,9 @@ app.post('/create-checkout', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
-// GET FIXTURES FROM THE ODDS API
-app.get('/fixtures', async (req, res) => {
-  try {
-    const axios = require('axios')
-    const sport = req.query.sport || 'Soccer'
-    const dateOffset = parseInt(req.query.dateOffset) || 0
-    
-    const date = new Date()
-    date.setDate(date.getDate() + dateOffset)
-    const dateStr = date.toISOString().split('T')[0]
 
-    const sportMap = {
-      'Soccer': ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league','soccer_uefa_europa_league'],
-      'Basketball': ['basketball_nba'],
-      'Football': ['americanfootball_nfl'],
-      'Baseball': ['baseball_mlb'],
-      'Tennis': ['tennis_atp_french_open','tennis_wta_french_open'],
-      'MMA/Boxing': ['mma_mixed_martial_arts']
-    }
-
-    const leagues = sportMap[sport] || sportMap['Soccer']
-    let allFixtures = []
-
-    for (const league of leagues) {
-      try {
-        const r = await axios.get(`https://api.the-odds-api.com/v4/sports/${league}/odds`, {
-          params: {
-            apiKey: process.env.ODDS_API_KEY,
-            regions: 'eu',
-            markets: 'h2h',
-            oddsFormat: 'decimal',
-            commenceTimeFrom: dateStr+'T00:00:00Z',
-            commenceTimeTo: dateStr+'T23:59:59Z'
-          }
-        })
-        const fixtures = r.data.map(g => ({
-          id: g.id,
-          home: g.home_team,
-          away: g.away_team,
-          league: league.replace(/soccer_|basketball_|americanfootball_|baseball_|tennis_|mma_/g,'').replace(/_/g,' ').toUpperCase(),
-          time: new Date(g.commence_time).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}),
-          date: new Date(g.commence_time).toLocaleDateString('en')
-        }))
-        allFixtures = allFixtures.concat(fixtures)
-      } catch(e) { continue }
-    }
-
-    res.json(allFixtures)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-app.get('/players', async (req, res) => {
-  try {
-    const axios = require('axios')
-    const { homeTeam, awayTeam } = req.query
-    
-    async function getTeamPlayers(teamName) {
-      const search = await axios.get('https://v3.football.api-sports.io/teams', {
-        headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
-        params: { name: teamName }
-      })
-      const team = search.data.response[0]
-      if (!team) return { all: [], gk: [] }
-      
-      const players = await axios.get('https://v3.football.api-sports.io/players/squads', {
-        headers: { 'x-apisports-key': process.env.FOOTBALL_API_KEY },
-        params: { team: team.team.id }
-      })
-      
-      const squad = players.data.response[0]?.players || []
-      const all = squad.map(p => p.name)
-      const gk = squad.filter(p => p.position === 'Goalkeeper').map(p => p.name)
-      return { all, gk }
-    }
-
-    const [home, away] = await Promise.all([
-      getTeamPlayers(homeTeam),
-      getTeamPlayers(awayTeam)
-    ])
-
-    res.json({
-      home: home.all,
-      away: away.all,
-      homeGK: home.gk,
-      awayGK: away.gk
-    })
-  } catch (err) {
-    res.json({ home: [], away: [], homeGK: [], awayGK: [] })
-  }
-})
+// ── START ─────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`LEDGR API running on port ${PORT} 🚀`)
 })
- 
