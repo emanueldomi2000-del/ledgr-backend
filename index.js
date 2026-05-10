@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
 require('./autoVerify')
+const axios = require('axios')
 
 const app = express()
 const prisma = new PrismaClient()
@@ -138,7 +139,6 @@ app.put('/picks/:id', async (req, res) => {
 // ── FIXTURES ──────────────────────────────────────────────────
 app.get('/fixtures', async (req, res) => {
   try {
-    const axios = require('axios')
     const sport = req.query.sport || 'Soccer'
     const dateOffset = parseInt(req.query.dateOffset) || 0
 
@@ -191,7 +191,6 @@ app.get('/fixtures', async (req, res) => {
 // ── PLAYERS ───────────────────────────────────────────────────
 app.get('/players', async (req, res) => {
   try {
-    const axios = require('axios')
     const { homeTeam, awayTeam } = req.query
 
     async function getTeamPlayers(teamName) {
@@ -260,7 +259,6 @@ app.listen(PORT, () => {
   // Self-ping every 10 minutes to keep Railway awake
   setInterval(async () => {
     try {
-      const axios = require('axios')
       await axios.get(`http://localhost:${PORT}/ping`)
       console.log('🟢 Keep-alive ping sent')
     } catch(e) {
