@@ -241,6 +241,61 @@ app.post('/create-checkout', async (req, res) => {
   }
 })
 
+// ── FOLLOW SYSTEM ────────────────────────────────────────────
+app.post('/follow', async (req, res) => {
+  try {
+    const { followerId, followingId } = req.body
+    if (!followerId || !followingId) return res.status(400).json({ error: 'Missing followerId or followingId' })
+    if (followerId === followingId) return res.status(400).json({ error: 'Cannot follow yourself' })
+    const follow = await prisma.follow.create({
+      data: { followerId, followingId }
+    })
+    res.json(follow)
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Already following' })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.delete('/follow', async (req, res) => {
+  try {
+    const { followerId, followingId } = req.body
+    if (!followerId || !followingId) return res.status(400).json({ error: 'Missing followerId or followingId' })
+    await prisma.follow.deleteMany({ where: { followerId, followingId } })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/followers/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params
+    const rows = await prisma.follow.findMany({
+      where: { followingId: userId },
+      include: { follower: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.json({ count: rows.length, followers: rows.map(r => r.follower) })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/following/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params
+    const rows = await prisma.follow.findMany({
+      where: { followerId: userId },
+      include: { following: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.json({ count: rows.length, following: rows.map(r => r.following) })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 // ── KEEP ALIVE — ping self every 10 minutes to prevent sleep ──
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
