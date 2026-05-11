@@ -1,17 +1,108 @@
-const express = require('express')
-const cors = require('cors')
-const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
+const express    = require('express')
+const cors       = require('cors')
+const bcrypt     = require('bcryptjs')
+const jwt        = require('jsonwebtoken')
+const nodemailer = require('nodemailer')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
 require('./autoVerify')
 const axios = require('axios')
 
-const app = express()
+const app    = express()
 const prisma = new PrismaClient()
 
 app.use(cors())
 app.use(express.json())
+
+// ── EMAIL ─────────────────────────────────────────────────────
+const mailer = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS   // Gmail App Password (not account password)
+  }
+})
+
+function genCode() {
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
+function verifyEmailHTML(username, code) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify your LEDGR account</title>
+</head>
+<body style="margin:0;padding:0;background:#07060d;font-family:'Helvetica Neue',Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#07060d;min-height:100vh;padding:48px 16px">
+  <tr><td align="center">
+    <table width="100%" style="max-width:520px;background:#0d0b18;border:1px solid rgba(184,159,255,0.15);border-radius:20px;overflow:hidden">
+
+      <!-- Top accent bar -->
+      <tr><td style="height:4px;background:linear-gradient(90deg,#7c3aed,#b89fff,#fbbf24)"></td></tr>
+
+      <!-- Header -->
+      <tr><td style="padding:36px 40px 28px;text-align:center">
+        <div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:28px;font-weight:900;letter-spacing:8px;color:#f0edff">
+          LEDG<span style="color:#b89fff">R</span>
+        </div>
+        <div style="font-family:'Courier New',monospace;font-size:10px;letter-spacing:4px;color:#544f6e;margin-top:6px;text-transform:uppercase">
+          Verified Record · Real Edge
+        </div>
+      </td></tr>
+
+      <!-- Body -->
+      <tr><td style="padding:0 40px 36px">
+        <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#f0edff;line-height:1.3">
+          Hey @${username}, one quick step ✓
+        </p>
+        <p style="margin:0 0 32px;font-size:14px;color:#9590b8;line-height:1.7">
+          Enter this 6-digit code in the app to verify your email and unlock your LEDGR account. The code expires in <strong style="color:#f0edff">24 hours</strong>.
+        </p>
+
+        <!-- Code block -->
+        <div style="background:#07060d;border:2px solid rgba(251,191,36,0.35);border-radius:16px;padding:32px;text-align:center;margin-bottom:32px">
+          <div style="font-family:'Courier New',monospace;font-size:11px;letter-spacing:4px;color:#fbbf24;margin-bottom:14px;text-transform:uppercase">
+            Verification Code
+          </div>
+          <div style="font-size:52px;font-weight:900;letter-spacing:14px;color:#fbbf24;font-family:'Courier New',monospace;text-shadow:0 0 40px rgba(251,191,36,0.3)">
+            ${code}
+          </div>
+        </div>
+
+        <p style="margin:0 0 6px;font-size:12px;color:#544f6e;line-height:1.6">
+          Didn't request this? You can safely ignore this email. Your account will not be created until the code is verified.
+        </p>
+      </td></tr>
+
+      <!-- Footer -->
+      <tr><td style="padding:20px 40px 28px;border-top:1px solid rgba(255,255,255,0.05);text-align:center">
+        <p style="margin:0;font-family:'Courier New',monospace;font-size:10px;color:#544f6e;letter-spacing:2px">
+          LEDGR · getledgr.bet · Real picks. Verified records.
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`
+}
+
+async function sendVerificationEmail(email, username, code) {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.warn('⚠️  EMAIL_USER / EMAIL_PASS not set — skipping verification email')
+    return
+  }
+  await mailer.sendMail({
+    from: `"LEDGR" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: `${code} is your LEDGR verification code`,
+    html: verifyEmailHTML(username, code)
+  })
+}
 
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get('/', (req, res) => {
@@ -29,7 +120,6 @@ app.post('/auth/register', async (req, res) => {
     if (!email || !username || !password) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
-    // Validate username
     if (!/^[a-zA-Z0-9_]+$/.test(username)) {
       return res.status(400).json({ error: 'Username: letters, numbers and _ only' })
     }
@@ -39,17 +129,84 @@ app.post('/auth/register', async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' })
     }
+
     const hashed = await bcrypt.hash(password, 10)
+    const code   = genCode()
+    const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
+
     const user = await prisma.user.create({
-      data: { email: email.toLowerCase().trim(), username: username.trim(), password: hashed }
+      data: {
+        email: email.toLowerCase().trim(),
+        username: username.trim(),
+        password: hashed,
+        verifyToken: code,
+        verifyTokenExpiry: expiry
+      }
     })
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '90d' })
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } })
+
+    await sendVerificationEmail(user.email, user.username, code)
+
+    res.json({
+      message: 'Check your email to verify your account',
+      email: user.email
+    })
   } catch (err) {
     if (err.code === 'P2002') {
       const field = err.meta?.target?.includes('email') ? 'Email' : 'Username'
       return res.status(400).json({ error: field + ' already taken' })
     }
+    res.status(500).json({ error: 'Server error — try again' })
+  }
+})
+
+app.post('/auth/verify-email', async (req, res) => {
+  try {
+    const { email, code } = req.body
+    if (!email || !code) return res.status(400).json({ error: 'Email and code are required' })
+
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } })
+    if (!user) return res.status(400).json({ error: 'No account found with this email' })
+    if (user.emailVerified) return res.status(400).json({ error: 'Email already verified' })
+    if (!user.verifyToken || user.verifyToken !== String(code)) {
+      return res.status(400).json({ error: 'Invalid verification code' })
+    }
+    if (!user.verifyTokenExpiry || new Date() > user.verifyTokenExpiry) {
+      return res.status(400).json({ error: 'Verification code has expired — request a new one' })
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, verifyToken: null, verifyTokenExpiry: null }
+    })
+
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '90d' })
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error — try again' })
+  }
+})
+
+app.post('/auth/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body
+    if (!email) return res.status(400).json({ error: 'Email is required' })
+
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } })
+    if (!user) return res.status(400).json({ error: 'No account found with this email' })
+    if (user.emailVerified) return res.status(400).json({ error: 'Email already verified' })
+
+    const code   = genCode()
+    const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verifyToken: code, verifyTokenExpiry: expiry }
+    })
+
+    await sendVerificationEmail(user.email, user.username, code)
+
+    res.json({ message: 'Verification code resent — check your email' })
+  } catch (err) {
     res.status(500).json({ error: 'Server error — try again' })
   }
 })
