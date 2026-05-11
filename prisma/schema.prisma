@@ -9,20 +9,21 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  username  String   @unique
-  password  String
-  role      String   @default("user")
-  elo       Int      @default(1000)
-  createdAt DateTime @default(now())
-  picks     Pick[]
+  id         String   @id @default(cuid())
+  email      String   @unique
+  username   String   @unique
+  password   String
+  role       String   @default("user")
+  elo        Int      @default(1000)
+  sharpScore Float    @default(0)
+  createdAt  DateTime @default(now())
+  picks      Pick[]
 }
 
 model Pick {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id])
+  user        User      @relation(fields: [userId], references: [id])
   sport       String
   event       String
   fixtureId   String?
@@ -31,12 +32,13 @@ model Pick {
   market      String
   odds        Float
   stake       Float
-  stakeType   String?  @default("units")
-  result      String   @default("pending")
-  pnl         Float    @default(0)
+  stakeType   String?   @default("units")
+  result      String    @default("pending")
+  pnl         Float     @default(0)
   confidence  String?
   reasoning   String?
   eloChange   Int?
   eloAfter    Int?
-  createdAt   DateTime @default(now())
+  lockedAt    DateTime?
+  createdAt   DateTime  @default(now())
 }

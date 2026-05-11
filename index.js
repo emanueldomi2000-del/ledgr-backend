@@ -91,12 +91,14 @@ app.post('/picks', async (req, res) => {
     const {
       userId, sport, event, fixtureId,
       homeTeam, awayTeam, market, odds, stake,
-      result, pnl, stakeType, confidence, reasoning
+      result, pnl, stakeType, confidence, reasoning, commenceTime
     } = req.body
 
     if (!userId || !event || !market || !odds || !stake) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
+
+    const lockedAt = commenceTime ? new Date(new Date(commenceTime).getTime() - 5 * 60 * 1000) : null
 
     const pick = await prisma.pick.create({
       data: {
@@ -113,26 +115,14 @@ app.post('/picks', async (req, res) => {
         pnl: parseFloat(pnl) || 0,
         stakeType: stakeType || 'units',
         confidence: confidence || null,
-        reasoning: reasoning || null
+        reasoning: reasoning || null,
+        lockedAt
       }
     })
     res.json(pick)
   } catch (err) {
     console.error('POST /picks error:', err.message)
     res.status(500).json({ error: 'Server error: ' + err.message })
-  }
-})
-
-app.put('/picks/:id', async (req, res) => {
-  try {
-    const { result, pnl } = req.body
-    const pick = await prisma.pick.update({
-      where: { id: req.params.id },
-      data: { result, pnl: parseFloat(pnl) }
-    })
-    res.json(pick)
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' })
   }
 })
 

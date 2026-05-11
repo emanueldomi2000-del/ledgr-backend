@@ -5,6 +5,35 @@ const prisma = new PrismaClient()
 
 const FOOTBALL_API_KEY = process.env.FOOTBALL_API_KEY
 
+async function recalculateSharpScore(userId) {
+  const picks = await prisma.pick.findMany({
+    where: { userId, result: { in: ['win', 'loss'] } }
+  })
+  if (!picks.length) return 0
+
+  const n = picks.length
+  const totalStake = picks.reduce((s, p) => s + p.stake, 0)
+  const totalPnl = picks.reduce((s, p) => s + p.pnl, 0)
+  const roi = totalStake > 0 ? totalPnl / totalStake : 0
+
+  // Shrink toward 0 for small samples; full weight at 30 picks
+  const sampleFactor = Math.min(n / 30, 1)
+
+  // Reward picking at higher (harder) odds
+  const avgOdds = picks.reduce((s, p) => s + p.odds, 0) / n
+  const oddsFactor = 1 + Math.log(Math.max(avgOdds, 1.01)) * 0.2
+
+  // Penalise high variance in per-pick ROI (streak instability)
+  const perPickROI = picks.map(p => p.pnl / p.stake)
+  const mean = perPickROI.reduce((s, x) => s + x, 0) / n
+  const variance = perPickROI.reduce((s, x) => s + Math.pow(x - mean, 2), 0) / n
+  const stdDev = Math.sqrt(variance)
+  const streakFactor = 1 / (1 + stdDev * 0.5)
+
+  const raw = roi * 100 * sampleFactor * oddsFactor * streakFactor
+  return Math.max(-100, Math.min(100, Math.round(raw * 100) / 100))
+}
+
 function parseOverUnder(market) {
   const m = market.toLowerCase()
   const overMatch = m.match(/over\s+([\d.]+)/)
@@ -97,7 +126,9 @@ async function verifySoccerPicks() {
             where: { id: pick.id },
             data: { result, pnl: parseFloat(pnl.toFixed(2)) }
           })
-          console.log(`✅ Pick ${pick.id} → ${result} | ${pick.event}`)
+          const sharpScore = await recalculateSharpScore(pick.userId)
+          await prisma.user.update({ where: { id: pick.userId }, data: { sharpScore } })
+          console.log(`✅ Pick ${pick.id} → ${result} | ${pick.event} | sharpScore → ${sharpScore}`)
         }
       } catch (err) {
         console.log(`⚠️ Error pick ${pick.id}:`, err.message)
@@ -134,7 +165,9 @@ async function verifyNBAPicks() {
             where: { id: pick.id },
             data: { result, pnl: parseFloat(pnl.toFixed(2)) }
           })
-          console.log(`✅ NBA Pick ${pick.id} → ${result}`)
+          const sharpScore = await recalculateSharpScore(pick.userId)
+          await prisma.user.update({ where: { id: pick.userId }, data: { sharpScore } })
+          console.log(`✅ NBA Pick ${pick.id} → ${result} | sharpScore → ${sharpScore}`)
         }
       } catch (err) {
         console.log(`⚠️ NBA error:`, err.message)
