@@ -231,6 +231,39 @@ app.post('/auth/login', async (req, res) => {
 })
 
 // ── PICKS ─────────────────────────────────────────────────────
+app.get('/picks/:id/clv', async (req, res) => {
+  try {
+    const pick = await prisma.pick.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, event: true, market: true, result: true, odds: true, closingOdds: true, clv: true }
+    })
+    if (!pick) return res.status(404).json({ error: 'Pick not found' })
+
+    let interpretation = 'CLV not yet available'
+    if (pick.clv !== null && pick.clv !== undefined) {
+      if      (pick.clv > 5)  interpretation = 'Sharp — significantly beat the market'
+      else if (pick.clv > 2)  interpretation = 'Positive CLV — edge over closing line'
+      else if (pick.clv > 0)  interpretation = 'Marginal CLV — slight edge'
+      else if (pick.clv > -3) interpretation = 'Near closing line — neutral'
+      else                    interpretation = 'Negative CLV — below closing line'
+    }
+
+    res.json({
+      pickId:       pick.id,
+      event:        pick.event,
+      market:       pick.market,
+      result:       pick.result,
+      yourOdds:     pick.odds,
+      closingOdds:  pick.closingOdds,
+      clv:          pick.clv,
+      clvLabel:     pick.clv !== null ? `${pick.clv >= 0 ? '+' : ''}${pick.clv.toFixed(2)}%` : null,
+      interpretation
+    })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 app.get('/picks', async (req, res) => {
   try {
     const picks = await prisma.pick.findMany({

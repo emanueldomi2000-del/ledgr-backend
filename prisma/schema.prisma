@@ -53,8 +53,10 @@ model Pick {
   pnl         Float     @default(0)
   confidence  String?
   reasoning   String?
-  eloChange   Int?
-  eloAfter    Int?
-  lockedAt    DateTime?
-  createdAt   DateTime  @default(now())
+  eloChange    Int?
+  eloAfter     Int?
+  lockedAt     DateTime?
+  closingOdds  Float?
+  clv          Float?
+  createdAt    DateTime  @default(now())
 }

@@ -13,7 +13,7 @@ async function recalculateSharpScore(userId) {
 
   const n = picks.length
   const totalStake = picks.reduce((s, p) => s + p.stake, 0)
-  const totalPnl = picks.reduce((s, p) => s + p.pnl, 0)
+  const totalPnl   = picks.reduce((s, p) => s + p.pnl, 0)
   const roi = totalStake > 0 ? totalPnl / totalStake : 0
 
   // Shrink toward 0 for small samples; full weight at 30 picks
@@ -25,13 +25,91 @@ async function recalculateSharpScore(userId) {
 
   // Penalise high variance in per-pick ROI (streak instability)
   const perPickROI = picks.map(p => p.pnl / p.stake)
-  const mean = perPickROI.reduce((s, x) => s + x, 0) / n
-  const variance = perPickROI.reduce((s, x) => s + Math.pow(x - mean, 2), 0) / n
-  const stdDev = Math.sqrt(variance)
+  const mean       = perPickROI.reduce((s, x) => s + x, 0) / n
+  const variance   = perPickROI.reduce((s, x) => s + Math.pow(x - mean, 2), 0) / n
+  const stdDev     = Math.sqrt(variance)
   const streakFactor = 1 / (1 + stdDev * 0.5)
 
-  const raw = roi * 100 * sampleFactor * oddsFactor * streakFactor
+  // CLV bonus: reward bettors who consistently beat the closing line
+  // Requires at least 5 CLV-measured picks to count; scales ±20%
+  const clvPicks = picks.filter(p => p.clv !== null && p.clv !== undefined)
+  let clvFactor = 1
+  if (clvPicks.length >= 5) {
+    const avgCLV = clvPicks.reduce((s, p) => s + p.clv, 0) / clvPicks.length
+    // Every 5% avg CLV shifts the factor by 10% (capped ±20%)
+    clvFactor = 1 + Math.max(-0.2, Math.min(0.2, avgCLV / 50))
+  }
+
+  const raw = roi * 100 * sampleFactor * oddsFactor * streakFactor * clvFactor
   return Math.max(-100, Math.min(100, Math.round(raw * 100) / 100))
+}
+
+// ── Closing Line Value ─────────────────────────────────────────
+// Fetches the best available h2h closing price for a pick's fixture
+// from The Odds API. Returns null if the event is no longer listed
+// (common for older completed games — CLV will simply stay null).
+
+const SPORT_LEAGUES = {
+  'Soccer':     ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league','soccer_uefa_europa_league'],
+  'Basketball': ['basketball_nba'],
+  'Football':   ['americanfootball_nfl'],
+  'Baseball':   ['baseball_mlb'],
+  'Tennis':     ['tennis_atp_french_open','tennis_wta_french_open'],
+  'MMA/Boxing': ['mma_mixed_martial_arts']
+}
+
+async function fetchClosingOdds(pick) {
+  if (!pick.fixtureId || !process.env.ODDS_API_KEY) return null
+
+  const leagues = SPORT_LEAGUES[pick.sport] || SPORT_LEAGUES['Soccer']
+  const market  = pick.market.toLowerCase()
+
+  for (const league of leagues) {
+    try {
+      const r = await axios.get(`https://api.the-odds-api.com/v4/sports/${league}/odds`, {
+        params: {
+          apiKey:    process.env.ODDS_API_KEY,
+          regions:   'eu',
+          markets:   'h2h',
+          oddsFormat:'decimal',
+          eventIds:  pick.fixtureId
+        }
+      })
+
+      const game = r.data && r.data[0]
+      if (!game) continue
+
+      // Use the bookmaker with the best (highest) odds for the relevant side
+      let bestOdds = null
+
+      for (const bk of (game.bookmakers || [])) {
+        const h2h = bk.markets?.find(m => m.key === 'h2h')
+        if (!h2h) continue
+
+        let outcome = null
+        if (market.includes('home win') || market === '1') {
+          outcome = h2h.outcomes.find(o => o.name === game.home_team)
+        } else if (market.includes('away win') || market === '2') {
+          outcome = h2h.outcomes.find(o => o.name === game.away_team)
+        } else if (market.includes('draw') || market === 'x') {
+          outcome = h2h.outcomes.find(o => o.name === 'Draw')
+        } else {
+          // Non-h2h market — use the home side as the reference benchmark
+          outcome = h2h.outcomes.find(o => o.name === game.home_team)
+        }
+
+        if (outcome && (!bestOdds || outcome.price > bestOdds)) {
+          bestOdds = outcome.price
+        }
+      }
+
+      if (bestOdds) return parseFloat(bestOdds.toFixed(3))
+    } catch (_) {
+      // This league didn't have the fixture — try next
+    }
+  }
+
+  return null
 }
 
 function parseOverUnder(market) {
@@ -122,13 +200,21 @@ async function verifySoccerPicks() {
           const pnl = result === 'win'
             ? parseFloat(pick.stake) * (parseFloat(pick.odds) - 1)
             : -parseFloat(pick.stake)
+
+          // Fetch closing odds and calculate CLV
+          const closingOdds = await fetchClosingOdds(pick)
+          const clv = closingOdds !== null
+            ? parseFloat(((pick.odds - closingOdds) / closingOdds * 100).toFixed(2))
+            : null
+
           await prisma.pick.update({
             where: { id: pick.id },
-            data: { result, pnl: parseFloat(pnl.toFixed(2)) }
+            data: { result, pnl: parseFloat(pnl.toFixed(2)), closingOdds, clv }
           })
           const sharpScore = await recalculateSharpScore(pick.userId)
           await prisma.user.update({ where: { id: pick.userId }, data: { sharpScore } })
-          console.log(`✅ Pick ${pick.id} → ${result} | ${pick.event} | sharpScore → ${sharpScore}`)
+          const clvStr = clv !== null ? ` | CLV ${clv >= 0 ? '+' : ''}${clv}%` : ''
+          console.log(`✅ Pick ${pick.id} → ${result} | ${pick.event}${clvStr} | sharpScore → ${sharpScore}`)
         }
       } catch (err) {
         console.log(`⚠️ Error pick ${pick.id}:`, err.message)
@@ -161,13 +247,20 @@ async function verifyNBAPicks() {
           const pnl = result === 'win'
             ? parseFloat(pick.stake) * (parseFloat(pick.odds) - 1)
             : -parseFloat(pick.stake)
+
+          const closingOdds = await fetchClosingOdds(pick)
+          const clv = closingOdds !== null
+            ? parseFloat(((pick.odds - closingOdds) / closingOdds * 100).toFixed(2))
+            : null
+
           await prisma.pick.update({
             where: { id: pick.id },
-            data: { result, pnl: parseFloat(pnl.toFixed(2)) }
+            data: { result, pnl: parseFloat(pnl.toFixed(2)), closingOdds, clv }
           })
           const sharpScore = await recalculateSharpScore(pick.userId)
           await prisma.user.update({ where: { id: pick.userId }, data: { sharpScore } })
-          console.log(`✅ NBA Pick ${pick.id} → ${result} | sharpScore → ${sharpScore}`)
+          const clvStr = clv !== null ? ` | CLV ${clv >= 0 ? '+' : ''}${clv}%` : ''
+          console.log(`✅ NBA Pick ${pick.id} → ${result}${clvStr} | sharpScore → ${sharpScore}`)
         }
       } catch (err) {
         console.log(`⚠️ NBA error:`, err.message)
