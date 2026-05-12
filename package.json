@@ -21,6 +21,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.7",
     "prisma": "^5.22.0",
-    "stripe": "^22.1.0"
+    "stripe": "^22.1.0",
+    "web-push": "^3.6.7"
   }
 }

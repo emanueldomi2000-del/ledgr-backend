@@ -3,10 +3,18 @@ const cors       = require('cors')
 const bcrypt     = require('bcryptjs')
 const jwt        = require('jsonwebtoken')
 const nodemailer = require('nodemailer')
+const webpush    = require('web-push')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
 require('./autoVerify')
 const axios = require('axios')
+
+// ── WEB PUSH ──────────────────────────────────────────────────
+webpush.setVapidDetails(
+  'mailto:' + (process.env.EMAIL_USER || 'admin@getledgr.bet'),
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+)
 
 const app    = express()
 const prisma = new PrismaClient()
@@ -307,9 +315,45 @@ app.post('/picks', async (req, res) => {
         confidence: confidence || null,
         reasoning: reasoning || null,
         lockedAt
-      }
+      },
+      include: { user: { select: { username: true } } }
     })
     res.json(pick)
+
+    // Notify followers asynchronously — do not block the response
+    setImmediate(async () => {
+      try {
+        const tipsterName = pick.user?.username || 'Someone'
+        const oddsFormatted = parseFloat(odds).toFixed(2)
+        const body = `${event} — ${market} @ ${oddsFormatted}`
+
+        // Get all followers of the tipster who have push subscriptions
+        const follows = await prisma.follow.findMany({
+          where: { followingId: userId },
+          select: { followerId: true }
+        })
+        if (!follows.length) return
+
+        const followerIds = follows.map(f => f.followerId)
+        const subs = await prisma.pushSubscription.findMany({
+          where: { userId: { in: followerIds } }
+        })
+        if (!subs.length) return
+
+        const payload = {
+          title: `@${tipsterName} posted a pick`,
+          body,
+          icon:  '/icon-192.png',
+          badge: '/icon-192.png',
+          url:   `/tipster?u=${tipsterName}`
+        }
+
+        await Promise.all(subs.map(sub => sendPush(sub, payload)))
+        console.log(`🔔 Push sent to ${subs.length} follower(s) of @${tipsterName}`)
+      } catch (err) {
+        console.error('Push notification error:', err.message)
+      }
+    })
   } catch (err) {
     console.error('POST /picks error:', err.message)
     res.status(500).json({ error: 'Server error: ' + err.message })
@@ -485,6 +529,53 @@ app.get('/following/:userId', async (req, res) => {
     res.status(500).json({ error: 'Server error' })
   }
 })
+
+// ── PUSH NOTIFICATIONS ────────────────────────────────────────
+app.get('/vapid-public-key', (req, res) => {
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY })
+})
+
+app.post('/push/subscribe', async (req, res) => {
+  try {
+    const { userId, subscription } = req.body
+    if (!userId || !subscription?.endpoint) {
+      return res.status(400).json({ error: 'userId and subscription required' })
+    }
+    await prisma.pushSubscription.upsert({
+      where:  { endpoint: subscription.endpoint },
+      update: { userId, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth },
+      create: { userId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth }
+    })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' })
+    await prisma.pushSubscription.deleteMany({ where: { endpoint } })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Send push to a single subscription, remove it on 404/410 (unsubscribed)
+async function sendPush(sub, payload) {
+  try {
+    await webpush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      JSON.stringify(payload)
+    )
+  } catch (err) {
+    if (err.statusCode === 404 || err.statusCode === 410) {
+      await prisma.pushSubscription.deleteMany({ where: { endpoint: sub.endpoint } })
+    }
+  }
+}
 
 // ── KEEP ALIVE — ping self every 10 minutes to prevent sleep ──
 const PORT = process.env.PORT || 3000
