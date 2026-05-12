@@ -722,8 +722,8 @@ app.post('/create-checkout', requireAuth, async (req, res) => {
       }],
       mode:        'subscription',
       metadata:    { followerId, tipsterId: tipsterId || '' },
-      success_url: `https://getledgr.bet/tipster?u=${tipsterUsername}&subscribed=true`,
-      cancel_url:  `https://getledgr.bet/tipster?u=${tipsterUsername}`
+      success_url: `https://getledgr.bet/subscribe/success?u=${tipsterUsername}`,
+      cancel_url:  `https://getledgr.bet/subscribe/cancel?u=${tipsterUsername}`
     })
 
     res.json({ url: session.url })
