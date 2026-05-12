@@ -12,11 +12,22 @@ const { closeSeason } = require('./seasons')
 const axios = require('axios')
 
 // ── WEB PUSH ──────────────────────────────────────────────────
-webpush.setVapidDetails(
-  'mailto:' + (process.env.EMAIL_USER || 'admin@getledgr.bet'),
-  process.env.VAPID_PUBLIC_KEY,
-  process.env.VAPID_PRIVATE_KEY
-)
+let vapidReady = false
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  try {
+    webpush.setVapidDetails(
+      'mailto:' + (process.env.EMAIL_USER || 'admin@getledgr.bet'),
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    )
+    vapidReady = true
+    console.log('✅ VAPID keys loaded')
+  } catch (err) {
+    console.warn('⚠️  VAPID setup failed (invalid keys) — push notifications disabled:', err.message)
+  }
+} else {
+  console.warn('⚠️  VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set — push notifications disabled')
+}
 
 const app    = express()
 const prisma = new PrismaClient()
@@ -639,10 +650,12 @@ app.get('/following/:userId', async (req, res) => {
 
 // ── PUSH NOTIFICATIONS ────────────────────────────────────────
 app.get('/vapid-public-key', (req, res) => {
+  if (!vapidReady) return res.status(503).json({ error: 'Push notifications not configured' })
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY })
 })
 
 app.post('/push/subscribe', async (req, res) => {
+  if (!vapidReady) return res.status(503).json({ error: 'Push notifications not configured' })
   try {
     const { userId, subscription } = req.body
     if (!userId || !subscription?.endpoint) {
@@ -672,6 +685,7 @@ app.post('/push/unsubscribe', async (req, res) => {
 
 // Send push to a single subscription, remove it on 404/410 (unsubscribed)
 async function sendPush(sub, payload) {
+  if (!vapidReady) return
   try {
     await webpush.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
