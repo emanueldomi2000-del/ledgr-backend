@@ -7,6 +7,7 @@ const webpush    = require('web-push')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
 require('./autoVerify')
+const { closeSeason } = require('./seasons')
 const axios = require('axios')
 
 // ── WEB PUSH ──────────────────────────────────────────────────
@@ -21,6 +22,21 @@ const prisma = new PrismaClient()
 
 app.use(cors())
 app.use(express.json())
+
+// ── ADMIN MIDDLEWARE ──────────────────────────────────────────
+async function adminOnly(req, res, next) {
+  const auth = req.headers.authorization
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { userId } = jwt.verify(auth.split(' ')[1], process.env.JWT_SECRET)
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
+    if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Admin only' })
+    req.adminUserId = userId
+    next()
+  } catch (e) {
+    res.status(401).json({ error: 'Invalid token' })
+  }
+}
 
 // ── EMAIL ─────────────────────────────────────────────────────
 const mailer = nodemailer.createTransport({
@@ -298,6 +314,10 @@ app.post('/picks', async (req, res) => {
 
     const lockedAt = commenceTime ? new Date(new Date(commenceTime).getTime() - 5 * 60 * 1000) : null
 
+    // Tag pick to active season if one exists
+    const activeSeason = await prisma.season.findFirst({ where: { isActive: true }, select: { id: true } })
+    const seasonId = activeSeason?.id || null
+
     const pick = await prisma.pick.create({
       data: {
         userId,
@@ -309,6 +329,7 @@ app.post('/picks', async (req, res) => {
         market,
         odds: parseFloat(odds),
         stake: parseFloat(stake),
+        seasonId,
         result: result || 'pending',
         pnl: parseFloat(pnl) || 0,
         stakeType: stakeType || 'units',
@@ -576,6 +597,77 @@ async function sendPush(sub, payload) {
     }
   }
 }
+
+// ── SEASONS ───────────────────────────────────────────────────
+app.get('/seasons', async (req, res) => {
+  try {
+    const seasons = await prisma.season.findMany({
+      orderBy: { number: 'desc' },
+      include: { _count: { select: { results: true, picks: true } } }
+    })
+    res.json(seasons)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/seasons/active', async (req, res) => {
+  try {
+    const season = await prisma.season.findFirst({
+      where:   { isActive: true },
+      include: { _count: { select: { results: true, picks: true } } }
+    })
+    if (!season) return res.status(404).json({ error: 'No active season' })
+    res.json(season)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/seasons/:id/leaderboard', async (req, res) => {
+  try {
+    const results = await prisma.seasonResult.findMany({
+      where:   { seasonId: req.params.id },
+      orderBy: { rank: 'asc' },
+      include: { user: { select: { id: true, username: true } } }
+    })
+    res.json(results)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/seasons', adminOnly, async (req, res) => {
+  try {
+    const { name, number, startDate, endDate } = req.body
+    if (!name || !number || !startDate || !endDate) {
+      return res.status(400).json({ error: 'name, number, startDate and endDate required' })
+    }
+    const season = await prisma.season.create({
+      data: { name, number: parseInt(number), startDate: new Date(startDate), endDate: new Date(endDate) }
+    })
+    res.json(season)
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Season number already exists' })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/seasons/:id/close', adminOnly, async (req, res) => {
+  try {
+    const season = await prisma.season.findUnique({ where: { id: req.params.id } })
+    if (!season) return res.status(404).json({ error: 'Season not found' })
+    if (!season.isActive && season.champion !== null) {
+      return res.status(400).json({ error: 'Season already closed' })
+    }
+    await closeSeason(season)
+    const updated = await prisma.season.findUnique({ where: { id: season.id } })
+    res.json({ success: true, season: updated })
+  } catch (err) {
+    console.error('Season close error:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
 
 // ── KEEP ALIVE — ping self every 10 minutes to prevent sleep ──
 const PORT = process.env.PORT || 3000

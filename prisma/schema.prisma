@@ -24,6 +24,7 @@ model User {
   followers         Follow[]           @relation("UserFollowing")
   following         Follow[]           @relation("UserFollowers")
   pushSubscriptions PushSubscription[]
+  seasonResults     SeasonResult[]
 }
 
 model PushSubscription {
@@ -69,5 +70,38 @@ model Pick {
   lockedAt     DateTime?
   closingOdds  Float?
   clv          Float?
+  seasonId     String?
+  season       Season?   @relation(fields: [seasonId], references: [id])
   createdAt    DateTime  @default(now())
+}
+
+model Season {
+  id        String         @id @default(cuid())
+  name      String
+  number    Int            @unique
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean        @default(false)
+  champion  String?
+  createdAt DateTime       @default(now())
+  results   SeasonResult[]
+  picks     Pick[]
+}
+
+model SeasonResult {
+  id         String   @id @default(cuid())
+  seasonId   String
+  userId     String
+  rank       Int
+  roi        Float
+  winRate    Float
+  totalPicks Int
+  totalPnL   Float
+  sharpScore Float
+  division   String
+  createdAt  DateTime @default(now())
+  season     Season   @relation(fields: [seasonId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([seasonId, userId])
 }
