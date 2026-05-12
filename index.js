@@ -1,9 +1,10 @@
-const express    = require('express')
-const cors       = require('cors')
-const bcrypt     = require('bcryptjs')
-const jwt        = require('jsonwebtoken')
-const nodemailer = require('nodemailer')
-const webpush    = require('web-push')
+const express       = require('express')
+const cors          = require('cors')
+const bcrypt        = require('bcryptjs')
+const jwt           = require('jsonwebtoken')
+const nodemailer    = require('nodemailer')
+const webpush       = require('web-push')
+const rateLimit     = require('express-rate-limit')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
 require('./autoVerify')
@@ -22,6 +23,91 @@ const prisma = new PrismaClient()
 
 app.use(cors())
 app.use(express.json())
+
+// ── RATE LIMITERS ─────────────────────────────────────────────
+const TOO_MANY = { error: 'Too many requests. Please slow down.' }
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,   // 15 minutes
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: TOO_MANY
+})
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: TOO_MANY
+})
+
+const pickLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,   // 1 hour
+  max: 20,
+  keyGenerator: (req) => req.body?.userId || req.ip,  // per user, not just IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: TOO_MANY
+})
+
+const followLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: TOO_MANY
+})
+
+// Apply general limiter to every route
+app.use(generalLimiter)
+
+// ── BOT DETECTION & IP BLACKLIST ──────────────────────────────
+const ipBlacklist = new Map()   // ip → { reason, blockedAt }
+
+// Per-IP burst tracker: block IPs sending >20 requests in 1 second
+const burstTracker  = new Map()  // ip → { count, windowStart }
+const BURST_LIMIT   = 20
+const BURST_WINDOW  = 1000      // ms
+
+function botProtection(req, res, next) {
+  const ip = req.ip
+
+  // 1. Check blacklist
+  if (ipBlacklist.has(ip)) {
+    return res.status(403).json({ error: 'Your IP has been blocked.' })
+  }
+
+  // 2. Block missing User-Agent (bots typically omit it)
+  const ua = req.headers['user-agent']
+  if (!ua || ua.trim() === '') {
+    return res.status(400).json({ error: 'Invalid request.' })
+  }
+
+  // 3. Burst detection: >20 requests per second from same IP
+  const now    = Date.now()
+  const entry  = burstTracker.get(ip)
+  if (entry) {
+    if (now - entry.windowStart < BURST_WINDOW) {
+      entry.count++
+      if (entry.count > BURST_LIMIT) {
+        ipBlacklist.set(ip, { reason: 'auto-burst', blockedAt: new Date().toISOString() })
+        console.warn(`🚫 Auto-blocked ${ip} for burst (${entry.count} req/s)`)
+        return res.status(429).json(TOO_MANY)
+      }
+    } else {
+      entry.count      = 1
+      entry.windowStart = now
+    }
+  } else {
+    burstTracker.set(ip, { count: 1, windowStart: now })
+  }
+
+  next()
+}
+
+app.use(botProtection)
 
 // ── ADMIN MIDDLEWARE ──────────────────────────────────────────
 async function adminOnly(req, res, next) {
@@ -138,7 +224,7 @@ app.get('/ping', (req, res) => {
 })
 
 // ── AUTH ──────────────────────────────────────────────────────
-app.post('/auth/register', async (req, res) => {
+app.post('/auth/register', authLimiter, async (req, res) => {
   try {
     const { email, username, password } = req.body
     if (!email || !username || !password) {
@@ -183,7 +269,7 @@ app.post('/auth/register', async (req, res) => {
   }
 })
 
-app.post('/auth/verify-email', async (req, res) => {
+app.post('/auth/verify-email', authLimiter, async (req, res) => {
   try {
     const { email, code } = req.body
     if (!email || !code) return res.status(400).json({ error: 'Email and code are required' })
@@ -210,7 +296,7 @@ app.post('/auth/verify-email', async (req, res) => {
   }
 })
 
-app.post('/auth/resend-verification', async (req, res) => {
+app.post('/auth/resend-verification', authLimiter, async (req, res) => {
   try {
     const { email } = req.body
     if (!email) return res.status(400).json({ error: 'Email is required' })
@@ -235,7 +321,7 @@ app.post('/auth/resend-verification', async (req, res) => {
   }
 })
 
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body
     if (!email || !password) {
@@ -300,7 +386,7 @@ app.get('/picks', async (req, res) => {
   }
 })
 
-app.post('/picks', async (req, res) => {
+app.post('/picks', pickLimiter, async (req, res) => {
   try {
     const {
       userId, sport, event, fixtureId,
@@ -497,7 +583,7 @@ app.post('/create-checkout', async (req, res) => {
 })
 
 // ── FOLLOW SYSTEM ────────────────────────────────────────────
-app.post('/follow', async (req, res) => {
+app.post('/follow', followLimiter, async (req, res) => {
   try {
     const { followerId, followingId } = req.body
     if (!followerId || !followingId) return res.status(400).json({ error: 'Missing followerId or followingId' })
@@ -667,6 +753,28 @@ app.post('/seasons/:id/close', adminOnly, async (req, res) => {
     console.error('Season close error:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
+})
+
+// ── ADMIN — IP BLACKLIST ──────────────────────────────────────
+app.post('/admin/blacklist-ip', adminOnly, (req, res) => {
+  const { ip, reason } = req.body
+  if (!ip) return res.status(400).json({ error: 'ip required' })
+  ipBlacklist.set(ip, { reason: reason || 'manual', blockedAt: new Date().toISOString() })
+  console.warn(`🚫 Admin blocked IP: ${ip} (${reason || 'manual'})`)
+  res.json({ success: true, ip, reason: reason || 'manual' })
+})
+
+app.delete('/admin/blacklist-ip', adminOnly, (req, res) => {
+  const { ip } = req.body
+  if (!ip) return res.status(400).json({ error: 'ip required' })
+  const existed = ipBlacklist.delete(ip)
+  res.json({ success: true, removed: existed })
+})
+
+app.get('/admin/blacklisted-ips', adminOnly, (req, res) => {
+  const list = []
+  ipBlacklist.forEach((meta, ip) => list.push({ ip, ...meta }))
+  res.json({ count: list.length, ips: list })
 })
 
 // ── KEEP ALIVE — ping self every 10 minutes to prevent sleep ──
