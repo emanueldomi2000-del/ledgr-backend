@@ -26,6 +26,25 @@ model User {
   pushSubscriptions PushSubscription[]
   seasonResults     SeasonResult[]
   chatMessages      ChatMessage[]
+  subscriptions     Subscription[]     @relation("UserSubscriptions")
+  subscribers       Subscription[]     @relation("TipsterSubscribers")
+}
+
+model Subscription {
+  id               String    @id @default(cuid())
+  followerId       String
+  tipsterId        String
+  stripeCustomerId String?
+  stripeSubId      String?   @unique
+  status           String    @default("inactive")
+  priceAmount      Int       @default(1000)
+  currency         String    @default("eur")
+  currentPeriodEnd DateTime?
+  createdAt        DateTime  @default(now())
+  follower         User      @relation("UserSubscriptions", fields: [followerId], references: [id])
+  tipster          User      @relation("TipsterSubscribers", fields: [tipsterId], references: [id])
+
+  @@unique([followerId, tipsterId])
 }
 
 model ChatRoom {

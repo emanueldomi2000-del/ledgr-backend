@@ -603,30 +603,184 @@ app.get('/players', async (req, res) => {
 // ── STRIPE ────────────────────────────────────────────────────
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder')
 
-app.post('/create-checkout', async (req, res) => {
+// Webhook must receive the raw body — register before express.json() parses it
+app.post('/stripe-webhook',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const sig     = req.headers['stripe-signature']
+    const secret  = process.env.STRIPE_WEBHOOK_SECRET
+
+    let event
+    try {
+      event = secret
+        ? stripe.webhooks.constructEvent(req.body, sig, secret)
+        : JSON.parse(req.body.toString())   // dev fallback: no signature check
+    } catch (err) {
+      console.error('Webhook signature error:', err.message)
+      return res.status(400).json({ error: 'Webhook signature invalid' })
+    }
+
+    try {
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object
+          if (session.mode !== 'subscription') break
+          const meta = session.metadata || {}
+          const { followerId, tipsterId } = meta
+          if (!followerId || !tipsterId) break
+          await prisma.subscription.upsert({
+            where:  { followerId_tipsterId: { followerId, tipsterId } },
+            update: {
+              stripeCustomerId: session.customer,
+              stripeSubId:      session.subscription,
+              status:           'active'
+            },
+            create: {
+              followerId,
+              tipsterId,
+              stripeCustomerId: session.customer,
+              stripeSubId:      session.subscription,
+              status:           'active',
+              priceAmount:      Math.round((session.amount_total || 1000) / 100),
+              currency:         session.currency || 'eur'
+            }
+          })
+          console.log(`💳 Subscription activated: ${followerId} → ${tipsterId}`)
+          break
+        }
+
+        case 'invoice.payment_succeeded': {
+          const inv = event.data.object
+          if (!inv.subscription) break
+          const periodEnd = new Date(inv.lines?.data?.[0]?.period?.end * 1000 || Date.now())
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: inv.subscription },
+            data:  { status: 'active', currentPeriodEnd: periodEnd }
+          })
+          break
+        }
+
+        case 'invoice.payment_failed': {
+          const inv = event.data.object
+          if (!inv.subscription) break
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: inv.subscription },
+            data:  { status: 'past_due' }
+          })
+          break
+        }
+
+        case 'customer.subscription.deleted': {
+          const sub = event.data.object
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: sub.id },
+            data:  { status: 'cancelled' }
+          })
+          console.log(`❌ Subscription cancelled: ${sub.id}`)
+          break
+        }
+
+        case 'customer.subscription.updated': {
+          const sub = event.data.object
+          const periodEnd = new Date(sub.current_period_end * 1000)
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: sub.id },
+            data:  { status: sub.status, currentPeriodEnd: periodEnd }
+          })
+          break
+        }
+      }
+    } catch (err) {
+      console.error('Webhook handler error:', err.message)
+    }
+
+    res.json({ received: true })
+  }
+)
+
+app.post('/create-checkout', requireAuth, async (req, res) => {
   try {
-    const { tipsterUsername, priceAmount } = req.body
+    const { tipsterId, tipsterUsername, priceAmount } = req.body
+    if (!tipsterUsername) return res.status(400).json({ error: 'tipsterUsername required' })
+
+    const amount   = Math.max(100, parseInt(priceAmount) || 1000)   // cents min €1
+    const followerId = req.userId
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'eur',
           product_data: {
-            name: `LEDGR — Subscribe to @${tipsterUsername}`,
-            description: `Monthly subscription to @${tipsterUsername} picks`
+            name:        `LEDGR — Subscribe to @${tipsterUsername}`,
+            description: `Monthly premium picks from @${tipsterUsername}`
           },
-          unit_amount: priceAmount * 100,
-          recurring: { interval: 'month' }
+          unit_amount: amount,
+          recurring:   { interval: 'month' }
         },
         quantity: 1
       }],
-      mode: 'subscription',
-      success_url: `https://getledgr.bet/home?subscribed=true`,
-      cancel_url: `https://getledgr.bet/tipster?u=${tipsterUsername}`
+      mode:        'subscription',
+      metadata:    { followerId, tipsterId: tipsterId || '' },
+      success_url: `https://getledgr.bet/tipster?u=${tipsterUsername}&subscribed=true`,
+      cancel_url:  `https://getledgr.bet/tipster?u=${tipsterUsername}`
     })
+
     res.json({ url: session.url })
   } catch (err) {
+    console.error('Stripe checkout error:', err.message)
     res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/subscriptions/:userId', async (req, res) => {
+  try {
+    const subs = await prisma.subscription.findMany({
+      where:   { followerId: req.params.userId, status: 'active' },
+      include: { tipster: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.json(subs)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/subscribers/:userId', async (req, res) => {
+  try {
+    const rows = await prisma.subscription.findMany({
+      where:   { tipsterId: req.params.userId, status: 'active' },
+      include: { follower: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.json({ count: rows.length, subscribers: rows.map(r => r.follower) })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.delete('/subscriptions/:id', requireAuth, async (req, res) => {
+  try {
+    const sub = await prisma.subscription.findUnique({ where: { id: req.params.id } })
+    if (!sub) return res.status(404).json({ error: 'Subscription not found' })
+    if (sub.followerId !== req.userId) return res.status(403).json({ error: 'Forbidden' })
+
+    // Cancel in Stripe if there's an active Stripe subscription
+    if (sub.stripeSubId) {
+      try {
+        await stripe.subscriptions.cancel(sub.stripeSubId)
+      } catch (stripeErr) {
+        console.warn('Stripe cancel error:', stripeErr.message)
+      }
+    }
+
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data:  { status: 'cancelled' }
+    })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
   }
 })
 
