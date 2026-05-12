@@ -25,6 +25,26 @@ model User {
   following         Follow[]           @relation("UserFollowers")
   pushSubscriptions PushSubscription[]
   seasonResults     SeasonResult[]
+  chatMessages      ChatMessage[]
+}
+
+model ChatRoom {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  type      String        @default("public")
+  sport     String?
+  createdAt DateTime      @default(now())
+  messages  ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  roomId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  room      ChatRoom @relation(fields: [roomId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model PushSubscription {

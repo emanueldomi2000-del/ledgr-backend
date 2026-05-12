@@ -1,9 +1,11 @@
 const express       = require('express')
+const http          = require('http')
 const cors          = require('cors')
 const bcrypt        = require('bcryptjs')
 const jwt           = require('jsonwebtoken')
 const nodemailer    = require('nodemailer')
 const webpush       = require('web-push')
+const WebSocket     = require('ws')
 const rateLimit     = require('express-rate-limit')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
@@ -71,6 +73,15 @@ const followLimiter = rateLimit({
   message: TOO_MANY
 })
 
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000,    // 1 minute
+  max: 30,
+  keyGenerator: (req) => req.userId || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: TOO_MANY
+})
+
 // Apply general limiter to every route
 app.use(generalLimiter)
 
@@ -119,6 +130,32 @@ function botProtection(req, res, next) {
 }
 
 app.use(botProtection)
+
+// ── AUTH MIDDLEWARE ───────────────────────────────────────────
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Authentication required' })
+  try {
+    const { userId } = jwt.verify(auth.split(' ')[1], process.env.JWT_SECRET)
+    req.userId = userId
+    next()
+  } catch (e) {
+    res.status(401).json({ error: 'Invalid token' })
+  }
+}
+
+// ── WEBSOCKET BROADCAST ───────────────────────────────────────
+// roomId → Set<WebSocket> — populated when WS server starts
+const chatRooms = new Map()
+
+function broadcastToRoom(roomId, payload) {
+  const clients = chatRooms.get(roomId)
+  if (!clients || !clients.size) return
+  const data = JSON.stringify(payload)
+  clients.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(data)
+  })
+}
 
 // ── ADMIN MIDDLEWARE ──────────────────────────────────────────
 async function adminOnly(req, res, next) {
@@ -769,6 +806,68 @@ app.post('/seasons/:id/close', adminOnly, async (req, res) => {
   }
 })
 
+// ── CHAT ──────────────────────────────────────────────────────
+app.get('/chat/rooms', async (req, res) => {
+  try {
+    const rooms = await prisma.chatRoom.findMany({
+      where:   { type: 'public' },
+      orderBy: { createdAt: 'asc' },
+      include: { _count: { select: { messages: true } } }
+    })
+    res.json(rooms)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/chat/rooms/:id/messages', async (req, res) => {
+  try {
+    const messages = await prisma.chatMessage.findMany({
+      where:   { roomId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+      take:    50,
+      include: { user: { select: { id: true, username: true } } }
+    })
+    res.json(messages.reverse())   // oldest first for the client
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/chat/rooms/:id/messages', requireAuth, chatLimiter, async (req, res) => {
+  try {
+    const { content } = req.body
+    if (!content || !content.trim()) return res.status(400).json({ error: 'Message content required' })
+    if (content.trim().length > 500) return res.status(400).json({ error: 'Message too long — max 500 characters' })
+
+    const room = await prisma.chatRoom.findUnique({ where: { id: req.params.id } })
+    if (!room) return res.status(404).json({ error: 'Room not found' })
+
+    const message = await prisma.chatMessage.create({
+      data:    { roomId: req.params.id, userId: req.userId, content: content.trim() },
+      include: { user: { select: { id: true, username: true } } }
+    })
+
+    broadcastToRoom(req.params.id, { type: 'message', message })
+
+    res.json(message)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/chat/rooms', adminOnly, async (req, res) => {
+  try {
+    const { name, type, sport } = req.body
+    if (!name) return res.status(400).json({ error: 'name required' })
+    const room = await prisma.chatRoom.create({ data: { name, type: type || 'public', sport: sport || null } })
+    res.json(room)
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Room name already exists' })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 // ── ADMIN — IP BLACKLIST ──────────────────────────────────────
 app.post('/admin/blacklist-ip', adminOnly, (req, res) => {
   const { ip, reason } = req.body
@@ -791,10 +890,76 @@ app.get('/admin/blacklisted-ips', adminOnly, (req, res) => {
   res.json({ count: list.length, ips: list })
 })
 
-// ── KEEP ALIVE — ping self every 10 minutes to prevent sleep ──
-const PORT = process.env.PORT || 3000
-app.listen(PORT, () => {
+// ── SEED CHAT ROOMS ───────────────────────────────────────────
+async function seedChatRooms() {
+  const defaults = [
+    { name: 'General',          sport: null           },
+    { name: 'Soccer',           sport: 'Soccer'       },
+    { name: 'NBA',              sport: 'Basketball'   },
+    { name: 'Tennis',           sport: 'Tennis'       },
+    { name: 'NFL',              sport: 'Football'     },
+    { name: 'MMA',              sport: 'MMA/Boxing'   },
+    { name: 'Picks Discussion', sport: null           },
+  ]
+  for (const r of defaults) {
+    const exists = await prisma.chatRoom.findUnique({ where: { name: r.name } })
+    if (!exists) {
+      await prisma.chatRoom.create({ data: { name: r.name, type: 'public', sport: r.sport } })
+      console.log(`💬 Seeded chat room: ${r.name}`)
+    }
+  }
+}
+
+// ── SERVER + WEBSOCKET ─────────────────────────────────────────
+const PORT   = process.env.PORT || 3000
+const server = http.createServer(app)
+const wss    = new WebSocket.Server({ server })
+
+wss.on('connection', (ws) => {
+  ws._roomId = null
+
+  ws.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString())
+
+      if (msg.type === 'join' && msg.roomId) {
+        // Validate JWT if provided
+        if (msg.token) {
+          try {
+            jwt.verify(msg.token, process.env.JWT_SECRET)
+          } catch (e) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid token' }))
+            return
+          }
+        }
+
+        // Leave old room
+        if (ws._roomId && chatRooms.has(ws._roomId)) {
+          chatRooms.get(ws._roomId).delete(ws)
+        }
+
+        // Join new room
+        ws._roomId = msg.roomId
+        if (!chatRooms.has(msg.roomId)) chatRooms.set(msg.roomId, new Set())
+        chatRooms.get(msg.roomId).add(ws)
+
+        ws.send(JSON.stringify({ type: 'joined', roomId: msg.roomId }))
+      }
+    } catch (_) {
+      // Ignore malformed frames
+    }
+  })
+
+  ws.on('close', () => {
+    if (ws._roomId && chatRooms.has(ws._roomId)) {
+      chatRooms.get(ws._roomId).delete(ws)
+    }
+  })
+})
+
+server.listen(PORT, async () => {
   console.log(`LEDGR API running on port ${PORT} 🚀`)
+  await seedChatRooms().catch(e => console.error('Chat seed error:', e.message))
 
   // Self-ping every 10 minutes to keep Railway awake
   setInterval(async () => {
