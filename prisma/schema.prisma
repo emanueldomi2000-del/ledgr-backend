@@ -114,6 +114,25 @@ model Pick {
   createdAt    DateTime  @default(now())
 }
 
+model PickReaction {
+  id        String   @id @default(cuid())
+  pickId    String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@unique([pickId, userId, emoji])
+}
+
+model PickTail {
+  id        String   @id @default(cuid())
+  pickId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  @@unique([pickId, userId])
+}
+
 model Season {
   id        String         @id @default(cuid())
   name      String

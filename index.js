@@ -515,6 +515,97 @@ app.post('/picks', pickLimiter, async (req, res) => {
   }
 })
 
+// ── REACTIONS ────────────────────────────────────────────────
+const VALID_EMOJIS = new Set(['fire','rocket','diamond','clap'])
+
+async function getReactionCounts(pickId) {
+  const rows = await prisma.pickReaction.groupBy({
+    by: ['emoji'],
+    where: { pickId },
+    _count: { emoji: true }
+  })
+  const counts = { fire:0, rocket:0, diamond:0, clap:0 }
+  rows.forEach(r => { counts[r.emoji] = r._count.emoji })
+  return counts
+}
+
+app.post('/picks/:id/react', async (req, res) => {
+  try {
+    const { userId, emoji } = req.body
+    if (!userId || !emoji) return res.status(400).json({ error: 'Missing userId or emoji' })
+    if (!VALID_EMOJIS.has(emoji)) return res.status(400).json({ error: 'Invalid emoji' })
+    const existing = await prisma.pickReaction.findUnique({
+      where: { pickId_userId_emoji: { pickId: req.params.id, userId, emoji } }
+    })
+    if (existing) {
+      await prisma.pickReaction.delete({ where: { id: existing.id } })
+    } else {
+      await prisma.pickReaction.create({ data: { pickId: req.params.id, userId, emoji } })
+    }
+    const counts = await getReactionCounts(req.params.id)
+    const userRows = await prisma.pickReaction.findMany({
+      where: { pickId: req.params.id, userId }, select: { emoji: true }
+    })
+    res.json({ ...counts, reacted: !existing, userReactions: userRows.map(r => r.emoji) })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/picks/:id/reactions', async (req, res) => {
+  try {
+    const counts = await getReactionCounts(req.params.id)
+    const { userId } = req.query
+    let userReactions = []
+    if (userId) {
+      const rows = await prisma.pickReaction.findMany({
+        where: { pickId: req.params.id, userId }, select: { emoji: true }
+      })
+      userReactions = rows.map(r => r.emoji)
+    }
+    res.json({ ...counts, userReactions })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// ── TAILS ────────────────────────────────────────────────────
+app.post('/picks/:id/tail', async (req, res) => {
+  try {
+    const { userId } = req.body
+    if (!userId) return res.status(400).json({ error: 'Missing userId' })
+    const existing = await prisma.pickTail.findUnique({
+      where: { pickId_userId: { pickId: req.params.id, userId } }
+    })
+    if (existing) {
+      await prisma.pickTail.delete({ where: { id: existing.id } })
+    } else {
+      await prisma.pickTail.create({ data: { pickId: req.params.id, userId } })
+    }
+    const count = await prisma.pickTail.count({ where: { pickId: req.params.id } })
+    res.json({ tailed: !existing, count })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/picks/:id/tails', async (req, res) => {
+  try {
+    const count = await prisma.pickTail.count({ where: { pickId: req.params.id } })
+    const { userId } = req.query
+    let tailed = false
+    if (userId) {
+      const existing = await prisma.pickTail.findUnique({
+        where: { pickId_userId: { pickId: req.params.id, userId } }
+      })
+      tailed = !!existing
+    }
+    res.json({ count, tailed })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 // ── FIXTURES ──────────────────────────────────────────────────
 app.get('/fixtures', async (req, res) => {
   try {
