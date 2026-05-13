@@ -606,6 +606,56 @@ app.get('/picks/:id/tails', async (req, res) => {
   }
 })
 
+// ── SPORTS NEWS (ESPN proxy) ──────────────────────────────────
+const ESPN_PATHS = {
+  soccer:     'soccer/all',
+  basketball: 'basketball/nba',
+  football:   'football/nfl',
+  tennis:     'tennis',
+  mma:        'mma/ufc',
+}
+const NEWS_CACHE = new Map()
+const NEWS_TTL   = 5 * 60 * 1000 // 5 minutes
+
+async function fetchESPN(sportPath, limit = 40) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/news?limit=${limit}`
+  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 LEDGR/1.0' } })
+  if (!r.ok) throw new Error('ESPN ' + r.status)
+  const data = await r.json()
+  return (data.articles || []).map(a => ({ ...a, _sport: sportPath.split('/')[0] }))
+}
+
+app.get('/news', async (req, res) => {
+  try {
+    const sport = req.query.sport || 'all'
+    const cacheKey = sport
+    const cached = NEWS_CACHE.get(cacheKey)
+    if (cached && Date.now() - cached.ts < NEWS_TTL) return res.json(cached.data)
+
+    let articles = []
+    if (sport === 'all') {
+      const results = await Promise.allSettled(
+        Object.entries(ESPN_PATHS).map(([k, path]) =>
+          fetchESPN(path, 20).then(arr => arr.map(a => ({ ...a, _sport: k })))
+        )
+      )
+      articles = results.flatMap(r => r.status === 'fulfilled' ? r.value : [])
+      articles.sort((a, b) => new Date(b.published) - new Date(a.published))
+    } else {
+      const path = ESPN_PATHS[sport]
+      if (!path) return res.status(400).json({ error: 'Unknown sport' })
+      articles = await fetchESPN(path, 50)
+      articles = articles.map(a => ({ ...a, _sport: sport }))
+    }
+
+    NEWS_CACHE.set(cacheKey, { ts: Date.now(), data: articles })
+    res.json(articles)
+  } catch (err) {
+    console.error('News fetch error:', err.message)
+    res.status(502).json([])
+  }
+})
+
 // ── FIXTURES ──────────────────────────────────────────────────
 app.get('/fixtures', async (req, res) => {
   try {
