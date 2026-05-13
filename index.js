@@ -1113,6 +1113,163 @@ app.post('/chat/rooms', adminOnly, async (req, res) => {
   }
 })
 
+// ── BETTING CIRCLES ───────────────────────────────────────────
+function genInviteCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase()
+}
+
+app.post('/circles', requireAuth, async (req, res) => {
+  try {
+    const { name, description, sport, isPrivate } = req.body
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name required' })
+    let inviteCode = genInviteCode()
+    // ensure uniqueness
+    while (await prisma.circle.findUnique({ where: { inviteCode } })) {
+      inviteCode = genInviteCode()
+    }
+    const circle = await prisma.circle.create({
+      data: {
+        name: name.trim(),
+        description: description?.trim() || null,
+        sport: sport || null,
+        isPrivate: !!isPrivate,
+        inviteCode,
+        ownerId: req.userId,
+        members: { create: { userId: req.userId, role: 'admin' } }
+      },
+      include: { members: true }
+    })
+    res.status(201).json(circle)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/circles', async (req, res) => {
+  try {
+    const circles = await prisma.circle.findMany({
+      where: { isPrivate: false },
+      include: {
+        owner: { select: { id: true, username: true } },
+        _count: { select: { members: true, messages: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.json(circles)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/circles/my', requireAuth, async (req, res) => {
+  try {
+    const memberships = await prisma.circleMember.findMany({
+      where: { userId: req.userId },
+      include: {
+        circle: {
+          include: {
+            owner: { select: { id: true, username: true } },
+            _count: { select: { members: true, messages: true } }
+          }
+        }
+      },
+      orderBy: { joinedAt: 'desc' }
+    })
+    res.json(memberships.map(m => ({ ...m.circle, role: m.role, joinedAt: m.joinedAt })))
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/circles/join', requireAuth, async (req, res) => {
+  try {
+    const { inviteCode } = req.body
+    if (!inviteCode) return res.status(400).json({ error: 'inviteCode required' })
+    const circle = await prisma.circle.findUnique({ where: { inviteCode: inviteCode.toUpperCase() } })
+    if (!circle) return res.status(404).json({ error: 'Circle not found' })
+    const existing = await prisma.circleMember.findUnique({
+      where: { circleId_userId: { circleId: circle.id, userId: req.userId } }
+    })
+    if (existing) return res.status(409).json({ error: 'Already a member' })
+    const member = await prisma.circleMember.create({
+      data: { circleId: circle.id, userId: req.userId, role: 'member' }
+    })
+    res.json({ circle, member })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/circles/:id', requireAuth, async (req, res) => {
+  try {
+    const circle = await prisma.circle.findUnique({
+      where: { id: req.params.id },
+      include: {
+        owner: { select: { id: true, username: true } },
+        members: { include: { user: { select: { id: true, username: true, elo: true } } }, orderBy: { joinedAt: 'asc' } }
+      }
+    })
+    if (!circle) return res.status(404).json({ error: 'Circle not found' })
+    const isMember = circle.members.some(m => m.userId === req.userId)
+    if (circle.isPrivate && !isMember) return res.status(403).json({ error: 'Private circle' })
+    res.json(circle)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.get('/circles/:id/messages', requireAuth, async (req, res) => {
+  try {
+    const member = await prisma.circleMember.findUnique({
+      where: { circleId_userId: { circleId: req.params.id, userId: req.userId } }
+    })
+    if (!member) return res.status(403).json({ error: 'Not a member' })
+    const messages = await prisma.circleMessage.findMany({
+      where: { circleId: req.params.id },
+      include: { user: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    })
+    res.json(messages.reverse())
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.post('/circles/:id/messages', requireAuth, chatLimiter, async (req, res) => {
+  try {
+    const { content } = req.body
+    if (!content || !content.trim()) return res.status(400).json({ error: 'content required' })
+    if (content.trim().length > 500) return res.status(400).json({ error: 'Message too long — max 500 characters' })
+    const member = await prisma.circleMember.findUnique({
+      where: { circleId_userId: { circleId: req.params.id, userId: req.userId } }
+    })
+    if (!member) return res.status(403).json({ error: 'Not a member' })
+    const message = await prisma.circleMessage.create({
+      data: { circleId: req.params.id, userId: req.userId, content: content.trim() },
+      include: { user: { select: { id: true, username: true } } }
+    })
+    broadcastToRoom(req.params.id, { type: 'circle_message', message })
+    res.json(message)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+app.delete('/circles/:id', requireAuth, async (req, res) => {
+  try {
+    const circle = await prisma.circle.findUnique({ where: { id: req.params.id } })
+    if (!circle) return res.status(404).json({ error: 'Circle not found' })
+    if (circle.ownerId !== req.userId) return res.status(403).json({ error: 'Owner only' })
+    await prisma.circleMessage.deleteMany({ where: { circleId: req.params.id } })
+    await prisma.circleMember.deleteMany({ where: { circleId: req.params.id } })
+    await prisma.circle.delete({ where: { id: req.params.id } })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 // ── ADMIN — IP BLACKLIST ──────────────────────────────────────
 app.post('/admin/blacklist-ip', adminOnly, (req, res) => {
   const { ip, reason } = req.body

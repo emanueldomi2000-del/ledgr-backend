@@ -28,6 +28,9 @@ model User {
   chatMessages      ChatMessage[]
   subscriptions     Subscription[]     @relation("UserSubscriptions")
   subscribers       Subscription[]     @relation("TipsterSubscribers")
+  circlesOwned      Circle[]           @relation("CircleOwner")
+  circleMemberships CircleMember[]
+  circleMessages    CircleMessage[]
 }
 
 model Subscription {
@@ -144,6 +147,42 @@ model Season {
   createdAt DateTime       @default(now())
   results   SeasonResult[]
   picks     Pick[]
+}
+
+model Circle {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  sport       String?
+  isPrivate   Boolean         @default(false)
+  inviteCode  String          @unique
+  ownerId     String
+  createdAt   DateTime        @default(now())
+  owner       User            @relation("CircleOwner", fields: [ownerId], references: [id])
+  members     CircleMember[]
+  messages    CircleMessage[]
+}
+
+model CircleMember {
+  id        String   @id @default(cuid())
+  circleId  String
+  userId    String
+  role      String   @default("member")
+  joinedAt  DateTime @default(now())
+  circle    Circle   @relation(fields: [circleId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([circleId, userId])
+}
+
+model CircleMessage {
+  id        String   @id @default(cuid())
+  circleId  String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  circle    Circle   @relation(fields: [circleId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model SeasonResult {
