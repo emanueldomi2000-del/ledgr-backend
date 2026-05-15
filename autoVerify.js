@@ -4,6 +4,8 @@ const axios   = require('axios')
 const webpush = require('web-push')
 const { PrismaClient } = require('@prisma/client')
 const cron    = require('node-cron')
+const { recalcUserRankings }  = require('./rankings-engine')
+const { emitPickGraded }      = require('./ws-events')
 
 const prisma = new PrismaClient()
 const ODDS_API = 'https://api.the-odds-api.com/v4'
@@ -392,6 +394,21 @@ async function settlePick(pick, result) {
     ? parseFloat(pick.stake) * (parseFloat(pick.odds) - 1)
     : -parseFloat(pick.stake)
 
+  // Snapshot rankings state BEFORE recalc (used for delta events)
+  let prevSnapshot = null
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT elo, division, "totalPicks" AS picks, "currentStreak" AS streak, "streakType"
+      FROM user_rankings WHERE "userId" = ${pick.userId} LIMIT 1
+    `
+    if (rows.length) {
+      const rankRows = await prisma.$queryRaw`
+        SELECT COUNT(*) + 1 AS rank FROM user_rankings WHERE elo > ${rows[0].elo}
+      `
+      prevSnapshot = { ...rows[0], rank: Number(rankRows[0]?.rank || 0) }
+    }
+  } catch (_) {}
+
   const closingOdds = await fetchClosingOdds(pick)
   const clv = closingOdds != null
     ? parseFloat(((pick.odds - closingOdds) / closingOdds * 100).toFixed(2))
@@ -405,6 +422,23 @@ async function settlePick(pick, result) {
   const sharpScore = await recalculateSharpScore(pick.userId)
   await prisma.user.update({ where: { id: pick.userId }, data: { sharpScore } })
 
+  // Recalculate rankings, then emit live events
+  try {
+    await recalcUserRankings(prisma, pick.userId)
+  } catch (e) {
+    console.error('  ⚠️  recalcUserRankings error:', e.message)
+  }
+  try {
+    await emitPickGraded(prisma, {
+      ...pick,
+      username: pick.user?.username || '',
+      result,
+      pnl: parseFloat(pnl.toFixed(2)),
+    }, prevSnapshot)
+  } catch (e) {
+    console.error('  ⚠️  emitPickGraded error:', e.message)
+  }
+
   await pushToTipster(pick.userId, result, pick, pnl)
 
   const clvStr = clv != null ? ` | CLV ${clv >= 0 ? '+' : ''}${clv}%` : ''
@@ -415,7 +449,8 @@ async function settlePick(pick, result) {
 // ── Main verification loop ────────────────────────────────────
 async function verifyAllPendingPicks() {
   const picks = await prisma.pick.findMany({
-    where: { result: 'pending' }
+    where:   { result: 'pending' },
+    include: { user: { select: { username: true } } },
   })
   if (!picks.length) return
 

@@ -157,6 +157,15 @@ function broadcastToRoom(roomId, payload) {
   })
 }
 
+// ── INTERNAL MIDDLEWARE ───────────────────────────────────────
+function requireInternal(req, res, next) {
+  const secret = req.headers['x-internal-secret']
+  if (!secret || secret !== process.env.INTERNAL_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' })
+  }
+  next()
+}
+
 // ── ADMIN MIDDLEWARE ──────────────────────────────────────────
 async function adminOnly(req, res, next) {
   const auth = req.headers.authorization
@@ -261,6 +270,24 @@ async function sendVerificationEmail(email, username, code) {
     html: verifyEmailHTML(username, code)
   })
 }
+
+// ── NEW MODULES ───────────────────────────────────────────────
+const rankingsEngine   = require('./rankings-engine')
+const profileEndpoints = require('./profile-endpoints')
+const wsEvents         = require('./ws-events')
+
+rankingsEngine.registerRoutes(app, prisma, requireInternal)
+profileEndpoints.registerRoutes(app, prisma, requireAuth)
+wsEvents.registerRoutes(app, prisma, requireAuth)
+
+// Weekly rankings snapshot (Sunday 23:59 UTC)
+require('node-cron').schedule('59 23 * * 0', async () => {
+  try {
+    await rankingsEngine.snapshotWeeklyRankings(prisma)
+  } catch (e) {
+    console.error('Weekly snapshot error:', e.message)
+  }
+})
 
 // ── HEALTH CHECK ──────────────────────────────────────────────
 app.get('/', (req, res) => {
@@ -508,6 +535,16 @@ app.post('/picks', pickLimiter, async (req, res) => {
       } catch (err) {
         console.error('Push notification error:', err.message)
       }
+
+      // Live event: notify followers via WebSocket
+      try {
+        await wsEvents.emitPickPosted(prisma, {
+          ...pick,
+          username: pick.user?.username || '',
+        })
+      } catch (err) {
+        console.error('emitPickPosted error:', err.message)
+      }
     })
   } catch (err) {
     console.error('POST /picks error:', err.message)
@@ -584,6 +621,23 @@ app.post('/picks/:id/tail', async (req, res) => {
     }
     const count = await prisma.pickTail.count({ where: { pickId: req.params.id } })
     res.json({ tailed: !existing, count })
+
+    if (!existing) {
+      setImmediate(async () => {
+        try {
+          const tailedPick = await prisma.pick.findUnique({
+            where:   { id: req.params.id },
+            include: { user: { select: { username: true } } },
+          })
+          if (tailedPick) {
+            await wsEvents.emitPickTailed(prisma, {
+              ...tailedPick,
+              username: tailedPick.user?.username || '',
+            }, count)
+          }
+        } catch (_) {}
+      })
+    }
   } catch (err) {
     res.status(500).json({ error: 'Server error' })
   }
@@ -1369,13 +1423,17 @@ const wss    = new WebSocket.Server({ server })
 
 wss.on('connection', (ws) => {
   ws._roomId = null
+  wsEvents.onWsConnect(ws)
 
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     try {
       const msg = JSON.parse(raw.toString())
 
+      // Live-events messages (subscribe/ping/catch_up/low_power) handled first
+      if (await wsEvents.handleLiveMessage(ws, msg, prisma)) return
+
+      // Chat: join room
       if (msg.type === 'join' && msg.roomId) {
-        // Validate JWT if provided
         if (msg.token) {
           try {
             jwt.verify(msg.token, process.env.JWT_SECRET)
@@ -1384,17 +1442,12 @@ wss.on('connection', (ws) => {
             return
           }
         }
-
-        // Leave old room
         if (ws._roomId && chatRooms.has(ws._roomId)) {
           chatRooms.get(ws._roomId).delete(ws)
         }
-
-        // Join new room
         ws._roomId = msg.roomId
         if (!chatRooms.has(msg.roomId)) chatRooms.set(msg.roomId, new Set())
         chatRooms.get(msg.roomId).add(ws)
-
         ws.send(JSON.stringify({ type: 'joined', roomId: msg.roomId }))
       }
     } catch (_) {
@@ -1403,6 +1456,7 @@ wss.on('connection', (ws) => {
   })
 
   ws.on('close', () => {
+    wsEvents.onWsClose(ws)
     if (ws._roomId && chatRooms.has(ws._roomId)) {
       chatRooms.get(ws._roomId).delete(ws)
     }
@@ -1412,6 +1466,7 @@ wss.on('connection', (ws) => {
 server.listen(PORT, async () => {
   console.log(`LEDGR API running on port ${PORT} 🚀`)
   await seedChatRooms().catch(e => console.error('Chat seed error:', e.message))
+  wsEvents.startOnlineCountBroadcast()
 
   // Self-ping every 10 minutes to keep Railway awake
   setInterval(async () => {
