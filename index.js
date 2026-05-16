@@ -50,10 +50,13 @@ const generalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: process.env.NODE_ENV !== 'production' ? 100 : 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: TOO_MANY
+  skipSuccessfulRequests: true,
+  handler: (req, res) => {
+    res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes.' })
+  }
 })
 
 const pickLimiter = rateLimit({
