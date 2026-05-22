@@ -8,6 +8,11 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum PickVisibility {
+  PUBLIC
+  PREMIUM
+}
+
 model User {
   id                String             @id @default(cuid())
   email             String             @unique
@@ -112,6 +117,7 @@ model Pick {
   lockedAt     DateTime?
   closingOdds  Float?
   clv          Float?
+  visibility  PickVisibility @default(PUBLIC)
   seasonId     String?
   season       Season?   @relation(fields: [seasonId], references: [id])
   createdAt    DateTime  @default(now())
