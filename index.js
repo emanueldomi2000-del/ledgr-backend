@@ -290,6 +290,10 @@ require('node-cron').schedule('59 23 * * 0', async () => {
 })
 
 // ── HEALTH CHECK ──────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() })
+})
+
 app.get('/', (req, res) => {
   res.json({ message: 'LEDGR API is live! 🔥', timestamp: new Date().toISOString() })
 })
@@ -457,7 +461,8 @@ app.get('/picks', async (req, res) => {
     })
     res.json(picks)
   } catch (err) {
-    res.status(500).json({ error: 'Server error' })
+    console.error('GET /picks error:', err)
+    res.status(500).json({ error: 'Failed to load picks', detail: err.message })
   }
 })
 
