@@ -8,10 +8,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum PickVisibility {
-  PUBLIC
-  PREMIUM
-}
+// enum PickVisibility { PUBLIC PREMIUM }  — removed until picks-visibility-migration runs on Railway
 
 model User {
   id                String             @id @default(cuid())
@@ -117,7 +114,7 @@ model Pick {
   lockedAt     DateTime?
   closingOdds  Float?
   clv          Float?
-  visibility  PickVisibility @default(PUBLIC)
+  // visibility  PickVisibility @default(PUBLIC)  — re-add after picks-visibility-migration runs on Railway
   seasonId     String?
   season       Season?   @relation(fields: [seasonId], references: [id])
   createdAt    DateTime  @default(now())
