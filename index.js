@@ -471,8 +471,11 @@ app.post('/picks', pickLimiter, async (req, res) => {
     const {
       userId, sport, event, fixtureId,
       homeTeam, awayTeam, market, odds, stake,
-      result, pnl, stakeType, confidence, reasoning, commenceTime
+      result, pnl, stakeType, confidence, reasoning, commenceTime,
+      visibility
     } = req.body
+
+    const safeVisibility = ['PUBLIC', 'PREMIUM'].includes(visibility) ? visibility : 'PUBLIC'
 
     if (!userId || !event || !market || !odds || !stake) {
       return res.status(400).json({ error: 'Missing required fields' })
@@ -501,6 +504,7 @@ app.post('/picks', pickLimiter, async (req, res) => {
         stakeType: stakeType || 'units',
         confidence: confidence || null,
         reasoning: reasoning || null,
+        visibility: safeVisibility,
         lockedAt
       },
       include: { user: { select: { username: true } } }
