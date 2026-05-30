@@ -17,12 +17,13 @@ const DIVISION_THRESHOLDS = [
 ]
 
 const ARCHETYPES = [
-  { key: 'demon',          test: s => s.currentStreak >= 5 },
-  { key: 'sniper',         test: s => s.totalPicks < 30 && s.roi > 20 },
-  { key: 'sharp',          test: s => s.sharpScore > 70 },
-  { key: 'grinder',        test: s => s.totalPicks > 100 && s.roi > 0 },
-  { key: 'underdog-king',  test: s => (s.avgOdds || 0) > 3.0 && s.roi > 0 },
-  { key: 'value-hunter',   test: s => (s.avgOdds || 0) >= 2.5 && (s.avgOdds || 0) <= 3.5 && s.roi > 0 },
+  { key: 'high-stakes',   test: s => s.currentStreak >= 5 || (s.sharpScore > 60 && s.roi > 30) },
+  { key: 'sharp',         test: s => s.sharpScore > 70 },
+  { key: 'data-nerd',     test: s => s.clvAvg != null && s.clvAvg > 2 && s.totalPicks >= 20 },
+  { key: 'grinder',       test: s => s.totalPicks > 100 && s.roi > 0 },
+  { key: 'underdog-king', test: s => (s.avgOdds || 0) > 3.0 && s.roi > 0 },
+  { key: 'value-hunter',  test: s => (s.avgOdds || 0) >= 2.0 && (s.avgOdds || 0) <= 3.5 && s.roi > 5 && s.totalPicks >= 10 },
+  { key: 'contender',     test: s => s.totalPicks >= 5 },
 ]
 
 const FLOW_STATES = [
@@ -37,17 +38,14 @@ const FLOW_STATES = [
 ]
 
 const ARCHETYPE_META = {
-  sniper:             { icon: '🎯', name: 'The Sniper',        color: '#f59e0b' },
-  demon:              { icon: '😈', name: 'The Demon',         color: '#f87171' },
-  grinder:            { icon: '⚙️', name: 'The Grinder',       color: '#94a3b8' },
-  sharp:              { icon: '📐', name: 'The Sharp',         color: '#818cf8' },
-  'value-hunter':     { icon: '🔍', name: 'Value Hunter',      color: '#34d399' },
-  'lock-machine':     { icon: '🔒', name: 'Lock Machine',      color: '#fbbf24' },
-  'ice-cold':         { icon: '🧊', name: 'Ice Cold',          color: '#7dd3fc' },
-  'profit-farmer':    { icon: '💰', name: 'Profit Farmer',     color: '#86efac' },
-  'underdog-king':    { icon: '👑', name: 'Underdog King',     color: '#e879f9' },
-  'data-nerd':        { icon: '📊', name: 'Data Nerd',         color: '#a78bfa' },
-  'momentum-monster': { icon: '🌊', name: 'Momentum Monster',  color: '#fb923c' },
+  'high-stakes':   { icon: '💀', name: 'The Reaper',       color: '#FF1515' },
+  'sharp':         { icon: '👁',  name: 'The Oracle',        color: '#00D4FF' },
+  'value-hunter':  { icon: '💎', name: 'The Diamond Mind',  color: '#80E8FF' },
+  'grinder':       { icon: '🦈', name: 'The Shark',         color: '#5878A0' },
+  'underdog-king': { icon: '🐉', name: 'The Dragon Soul',   color: '#FF3322' },
+  'specialist':    { icon: '👑', name: 'The Kingmaker',     color: '#C8A000' },
+  'data-nerd':     { icon: '⬡',  name: 'The Void Emperor',  color: '#8B00FF' },
+  'contender':     { icon: '🥊', name: 'The Contender',     color: '#94a3b8' },
 }
 
 const FLOW_META = {
