@@ -53,8 +53,23 @@ function registerRoutes(app, prisma, requireAuth) {
       `
       if (!rows.length) return res.json({})
       const p = rows[0]
+
+      // Resolve archetype: manual override takes priority, rankings fallback if null
+      let archetype = p.archetype || null
+      let archetypeSource = archetype ? 'manual' : null
+      if (!archetype) {
+        const rankRows = await prisma.$queryRaw`
+          SELECT archetype FROM user_rankings WHERE username = ${username} LIMIT 1
+        `
+        if (rankRows.length && rankRows[0].archetype) {
+          archetype = rankRows[0].archetype
+          archetypeSource = 'rankings'
+        }
+      }
+
       return res.json({
-        archetype:        p.archetype || null,
+        archetype:        archetype,
+        archetypeSource:  archetypeSource,
         banner:           p.banner || 'default',
         border:           p.border || 'clean',
         theme:            p.theme || 'default',
@@ -158,8 +173,23 @@ function registerRoutes(app, prisma, requireAuth) {
       `
       if (!rows.length) return res.json({})
       const p = rows[0]
+
+      // Resolve archetype: manual override takes priority, rankings fallback if null
+      let archetype = p.archetype || null
+      let archetypeSource = archetype ? 'manual' : null
+      if (!archetype) {
+        const rankRows = await prisma.$queryRaw`
+          SELECT archetype FROM user_rankings WHERE "userId" = ${userId} LIMIT 1
+        `
+        if (rankRows.length && rankRows[0].archetype) {
+          archetype = rankRows[0].archetype
+          archetypeSource = 'rankings'
+        }
+      }
+
       return res.json({
-        archetype:        p.archetype || null,
+        archetype:        archetype,
+        archetypeSource:  archetypeSource,
         banner:           p.banner || 'default',
         border:           p.border || 'clean',
         theme:            p.theme || 'default',
