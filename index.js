@@ -9,7 +9,7 @@ const WebSocket     = require('ws')
 const rateLimit     = require('express-rate-limit')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
-require('./autoVerify')
+const { settlePick } = require('./autoVerify')
 const { closeSeason } = require('./seasons')
 const axios = require('axios')
 
@@ -455,18 +455,72 @@ app.get('/picks/:id/clv', async (req, res) => {
 
 app.get('/picks', async (req, res) => {
   try {
+    const { userId } = req.query
+
+    // Decode viewer identity from optional Bearer token
+    let viewerId = null
+    const authHeader = req.headers.authorization
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET)
+        viewerId = decoded.userId
+      } catch (_) {}
+    }
+
+    if (!userId) {
+      // No filter: return only PUBLIC picks from the global feed
+      const picks = await prisma.pick.findMany({
+        where: { visibility: 'PUBLIC' },
+        include: { user: { select: { username: true } } },
+        orderBy: { createdAt: 'desc' }
+      })
+      return res.json(picks)
+    }
+
+    // Fetch all picks for this tipster
     const picks = await prisma.pick.findMany({
+      where: { userId },
       include: { user: { select: { username: true } } },
       orderBy: { createdAt: 'desc' }
     })
-    res.json(picks)
+
+    // Owner sees everything
+    if (viewerId === userId) return res.json(picks)
+
+    // Check if viewer has an active subscription to this tipster
+    let hasAccess = false
+    if (viewerId) {
+      const sub = await prisma.subscription.findFirst({
+        where: { followerId: viewerId, tipsterId: userId, status: 'active' }
+      })
+      hasAccess = !!sub
+    }
+
+    if (hasAccess) return res.json(picks)
+
+    // Mask PREMIUM picks for everyone else
+    const masked = picks.map(p => {
+      if (p.visibility !== 'PREMIUM') return p
+      return {
+        id:         p.id,
+        userId:     p.userId,
+        username:   p.user?.username ?? null,
+        sport:      p.sport,
+        event:      p.event,
+        createdAt:  p.createdAt,
+        result:     p.result,
+        visibility: 'PREMIUM',
+        _teaser:    true
+      }
+    })
+    res.json(masked)
   } catch (err) {
     console.error('GET /picks error:', err)
     res.status(500).json({ error: 'Failed to load picks', detail: err.message })
   }
 })
 
-app.post('/picks', pickLimiter, async (req, res) => {
+app.post('/picks', pickLimiter, requireAuth, async (req, res) => {
   try {
     const {
       userId, sport, event, fixtureId,
@@ -479,6 +533,16 @@ app.post('/picks', pickLimiter, async (req, res) => {
 
     if (!userId || !event || !market || !odds || !stake) {
       return res.status(400).json({ error: 'Missing required fields' })
+    }
+    if (userId !== req.userId) return res.status(403).json({ error: 'userId mismatch' })
+
+    const safeStakeType = stakeType || 'units'
+    if (!['units', 'dollar'].includes(safeStakeType)) {
+      return res.status(400).json({ error: 'Stake type must be units or dollar. Percentage stakes are not supported for verified records.' })
+    }
+
+    if (commenceTime && new Date(commenceTime) <= new Date()) {
+      return res.status(400).json({ error: 'Pick rejected: this fixture has already started' })
     }
 
     const lockedAt = commenceTime ? new Date(new Date(commenceTime).getTime() - 5 * 60 * 1000) : null
@@ -501,7 +565,7 @@ app.post('/picks', pickLimiter, async (req, res) => {
         seasonId,
         result: result || 'pending',
         pnl: parseFloat(pnl) || 0,
-        stakeType: stakeType || 'units',
+        stakeType: safeStakeType,
         confidence: confidence || null,
         reasoning: reasoning || null,
         visibility: safeVisibility,
@@ -575,10 +639,11 @@ async function getReactionCounts(pickId) {
   return counts
 }
 
-app.post('/picks/:id/react', async (req, res) => {
+app.post('/picks/:id/react', requireAuth, async (req, res) => {
   try {
-    const { userId, emoji } = req.body
-    if (!userId || !emoji) return res.status(400).json({ error: 'Missing userId or emoji' })
+    const { emoji } = req.body
+    const userId = req.userId
+    if (!emoji) return res.status(400).json({ error: 'Missing emoji' })
     if (!VALID_EMOJIS.has(emoji)) return res.status(400).json({ error: 'Invalid emoji' })
     const existing = await prisma.pickReaction.findUnique({
       where: { pickId_userId_emoji: { pickId: req.params.id, userId, emoji } }
@@ -616,10 +681,9 @@ app.get('/picks/:id/reactions', async (req, res) => {
 })
 
 // ── TAILS ────────────────────────────────────────────────────
-app.post('/picks/:id/tail', async (req, res) => {
+app.post('/picks/:id/tail', requireAuth, async (req, res) => {
   try {
-    const { userId } = req.body
-    if (!userId) return res.status(400).json({ error: 'Missing userId' })
+    const userId = req.userId
     const existing = await prisma.pickTail.findUnique({
       where: { pickId_userId: { pickId: req.params.id, userId } }
     })
@@ -730,12 +794,12 @@ app.get('/fixtures', async (req, res) => {
     const dateStr = date.toISOString().split('T')[0]
 
     const sportMap = {
-      'Soccer': ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league','soccer_uefa_europa_league'],
+      'Soccer': ['soccer_epl','soccer_spain_la_liga','soccer_italy_serie_a','soccer_germany_bundesliga','soccer_france_ligue_one','soccer_uefa_champs_league','soccer_uefa_europa_league','soccer_usa_mls','soccer_netherlands_eredivisie','soccer_portugal_primeira_liga','soccer_turkey_super_league','soccer_brazil_campeonato','soccer_argentina_primera_division'],
       'Basketball': ['basketball_nba'],
       'Football': ['americanfootball_nfl'],
       'Baseball': ['baseball_mlb'],
-      'Tennis': ['tennis_atp_french_open','tennis_wta_french_open'],
-      'MMA/Boxing': ['mma_mixed_martial_arts']
+      'Tennis': ['tennis_atp_french_open','tennis_wta_french_open','tennis_atp_wimbledon','tennis_wta_wimbledon','tennis_atp_us_open','tennis_wta_us_open','tennis_atp_australian_open','tennis_wta_australian_open','tennis_atp_double','tennis_wta_double'],
+      'MMA/Boxing': ['mma_mixed_martial_arts','boxing_boxing']
     }
 
     const leagues = sportMap[sport] || sportMap['Soccer']
@@ -753,14 +817,30 @@ app.get('/fixtures', async (req, res) => {
             commenceTimeTo: dateStr + 'T23:59:59Z'
           }
         })
-        const fixtures = r.data.map(g => ({
-          id: g.id,
-          home: g.home_team,
-          away: g.away_team,
-          league: league.replace(/soccer_|basketball_|americanfootball_|baseball_|tennis_|mma_/g,'').replace(/_/g,' ').toUpperCase(),
-          time: new Date(g.commence_time).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}),
-          date: new Date(g.commence_time).toLocaleDateString('en')
-        }))
+        const fixtures = r.data.map(g => {
+          let homeOdds=null,awayOdds=null,drawOdds=null;
+          for(const bk of(g.bookmakers||[])){
+            const h2h=bk.markets?.find(x=>x.key==='h2h');
+            if(!h2h)continue;
+            for(const o of(h2h.outcomes||[])){
+              if(o.name===g.home_team&&(!homeOdds||o.price>homeOdds))homeOdds=o.price;
+              if(o.name===g.away_team&&(!awayOdds||o.price>awayOdds))awayOdds=o.price;
+              if(o.name==='Draw'     &&(!drawOdds||o.price>drawOdds))drawOdds=o.price;
+            }
+          }
+          return{
+            id:g.id,
+            home:g.home_team,
+            away:g.away_team,
+            league:league.replace(/soccer_|basketball_|americanfootball_|baseball_|tennis_|mma_/g,'').replace(/_/g,' ').toUpperCase(),
+            time:new Date(g.commence_time).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}),
+            date:new Date(g.commence_time).toLocaleDateString('en'),
+            homeOdds:homeOdds?parseFloat(homeOdds.toFixed(2)):null,
+            awayOdds:awayOdds?parseFloat(awayOdds.toFixed(2)):null,
+            drawOdds:drawOdds?parseFloat(drawOdds.toFixed(2)):null,
+            commenceTime:g.commence_time
+          };
+        })
         allFixtures = allFixtures.concat(fixtures)
       } catch(e) { continue }
     }
@@ -989,10 +1069,11 @@ app.delete('/subscriptions/:id', requireAuth, async (req, res) => {
 })
 
 // ── FOLLOW SYSTEM ────────────────────────────────────────────
-app.post('/follow', followLimiter, async (req, res) => {
+app.post('/follow', followLimiter, requireAuth, async (req, res) => {
   try {
-    const { followerId, followingId } = req.body
-    if (!followerId || !followingId) return res.status(400).json({ error: 'Missing followerId or followingId' })
+    const { followingId } = req.body
+    const followerId = req.userId
+    if (!followingId) return res.status(400).json({ error: 'Missing followingId' })
     if (followerId === followingId) return res.status(400).json({ error: 'Cannot follow yourself' })
     const follow = await prisma.follow.create({
       data: { followerId, followingId }
@@ -1004,10 +1085,11 @@ app.post('/follow', followLimiter, async (req, res) => {
   }
 })
 
-app.delete('/follow', async (req, res) => {
+app.delete('/follow', requireAuth, async (req, res) => {
   try {
-    const { followerId, followingId } = req.body
-    if (!followerId || !followingId) return res.status(400).json({ error: 'Missing followerId or followingId' })
+    const { followingId } = req.body
+    const followerId = req.userId
+    if (!followingId) return res.status(400).json({ error: 'Missing followingId' })
     await prisma.follow.deleteMany({ where: { followerId, followingId } })
     res.json({ success: true })
   } catch (err) {
@@ -1403,6 +1485,42 @@ app.get('/admin/blacklisted-ips', adminOnly, (req, res) => {
   const list = []
   ipBlacklist.forEach((meta, ip) => list.push({ ip, ...meta }))
   res.json({ count: list.length, ips: list })
+})
+
+// ── ADMIN: FORCE SETTLE PICK ──────────────────────────────────
+app.put('/admin/picks/:id/settle', adminOnly, async (req, res) => {
+  try {
+    const { result } = req.body
+    if (!['win', 'loss', 'push'].includes(result)) {
+      return res.status(400).json({ error: 'result must be win, loss, or push' })
+    }
+
+    const pick = await prisma.pick.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { username: true } } }
+    })
+    if (!pick) return res.status(404).json({ error: 'Pick not found' })
+    if (pick.result !== 'pending') {
+      return res.status(400).json({ error: `Pick already settled: ${pick.result}` })
+    }
+
+    const adminId = req.adminUserId
+    await settlePick(pick, result)
+
+    const adminSettledAt = new Date()
+    await prisma.pick.update({
+      where: { id: pick.id },
+      data: { adminSettledBy: adminId, adminSettledAt }
+    })
+
+    console.warn(`[ADMIN SETTLE] pick=${pick.id} | owner=@${pick.user?.username} | event="${pick.event}" | market="${pick.market}" | result=${result} | adminId=${adminId} | at=${adminSettledAt.toISOString()}`)
+
+    const updated = await prisma.pick.findUnique({ where: { id: pick.id } })
+    res.json({ success: true, pick: updated })
+  } catch (err) {
+    console.error('Admin settle error:', err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── SEED CHAT ROOMS ───────────────────────────────────────────
