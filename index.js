@@ -131,6 +131,12 @@ function botProtection(req, res, next) {
 
 app.use(botProtection)
 
+// ── INPUT SANITIZERS ─────────────────────────────────────────
+function _sanitizeReasoning(text) {
+  if (!text) return null
+  return String(text).replace(/<[^>]*>/g, '').trim().slice(0, 500)
+}
+
 // ── AUTH MIDDLEWARE ───────────────────────────────────────────
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization
@@ -567,7 +573,7 @@ app.post('/picks', pickLimiter, requireAuth, async (req, res) => {
         pnl: parseFloat(pnl) || 0,
         stakeType: safeStakeType,
         confidence: confidence || null,
-        reasoning: reasoning || null,
+        reasoning: _sanitizeReasoning(reasoning),
         visibility: safeVisibility,
         lockedAt
       },
