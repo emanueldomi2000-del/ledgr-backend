@@ -8,11 +8,6 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum PickVisibility {
-  PUBLIC
-  PREMIUM
-}
-
 model User {
   id                String             @id @default(cuid())
   email             String             @unique
@@ -115,12 +110,14 @@ model Pick {
   eloChange    Int?
   eloAfter     Int?
   lockedAt     DateTime?
-  closingOdds  Float?
-  clv          Float?
-  visibility   PickVisibility @default(PUBLIC)
-  seasonId     String?
-  season       Season?   @relation(fields: [seasonId], references: [id])
-  createdAt    DateTime  @default(now())
+  closingOdds     Float?
+  clv             Float?
+  visibility      String         @default("PUBLIC")
+  seasonId        String?
+  season          Season?   @relation(fields: [seasonId], references: [id])
+  adminSettledBy  String?
+  adminSettledAt  DateTime?         @db.Timestamptz(6)
+  createdAt       DateTime  @default(now())
 }
 
 model PickReaction {
@@ -207,4 +204,122 @@ model SeasonResult {
   user       User     @relation(fields: [userId], references: [id])
 
   @@unique([seasonId, userId])
+}
+
+model live_events {
+  id           BigInt    @id @default(autoincrement())
+  type         String    @db.VarChar(30)
+  rarity       Int       @default(1) @db.SmallInt
+  username     String?   @db.VarChar(50)
+  targetUserId String?
+  payload      Json
+  createdAt    DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([targetUserId, createdAt(sort: Desc)], map: "idx_le_broadcast")
+  @@index([createdAt(sort: Desc)], map: "idx_le_created")
+  @@index([type, createdAt(sort: Desc)], map: "idx_le_type")
+}
+
+model profiles {
+  id               BigInt    @id @default(autoincrement())
+  userId           String    @unique
+  username         String    @db.VarChar(50)
+  bio              String?
+  social_twitter   String?   @db.VarChar(50)
+  social_instagram String?   @db.VarChar(50)
+  archetype        String?   @db.VarChar(30)
+  banner           String?   @db.VarChar(30)
+  border           String?   @db.VarChar(30)
+  theme            String?   @db.VarChar(20)
+  fav_sports       Json?
+  avatar_b64       String?
+  banner_b64       String?
+  updated_at       DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([username], map: "idx_profiles_username")
+}
+
+model ranking_history {
+  id            BigInt    @id @default(autoincrement())
+  userId        String
+  username      String    @db.VarChar(50)
+  isoWeek       String    @db.Char(8)
+  elo           Int
+  division      String    @db.VarChar(20)
+  divisionScore Decimal   @db.Decimal(6, 2)
+  sharpScore    Decimal   @db.Decimal(6, 2)
+  roi           Decimal   @db.Decimal(8, 4)
+  winRate       Decimal   @db.Decimal(6, 4)
+  totalPicks    Int
+  rank          Int?
+  snapshotAt    DateTime? @default(now()) @db.Timestamp(6)
+
+  @@unique([userId, isoWeek])
+  @@index([isoWeek], map: "idx_rh_isoweek")
+  @@index([userId], map: "idx_rh_userid")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model recent_picks_cache {
+  userId    String
+  slot      Int       @db.SmallInt
+  result    String    @default("pending") @db.VarChar(10)
+  sport     String?   @db.VarChar(30)
+  market    String?   @db.VarChar(50)
+  odds      Decimal?  @db.Decimal(8, 4)
+  createdAt DateTime? @db.Timestamp(6)
+
+  @@id([userId, slot])
+  @@index([userId], map: "idx_rpc_userid")
+}
+
+model user_notifications {
+  id        BigInt    @id @default(autoincrement())
+  userId    String
+  type      String    @db.VarChar(30)
+  rarity    Int       @default(1) @db.SmallInt
+  payload   Json
+  readAt    DateTime? @db.Timestamp(6)
+  createdAt DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_un_user_created")
+  @@index([userId, readAt], map: "idx_un_user_unread")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model user_rankings {
+  userId           String    @id
+  username         String    @db.VarChar(50)
+  totalPicks       Int       @default(0)
+  wins             Int       @default(0)
+  losses           Int       @default(0)
+  pushes           Int       @default(0)
+  totalStake       Decimal   @default(0.00) @db.Decimal(12, 2)
+  totalPnl         Decimal   @default(0.00) @db.Decimal(12, 2)
+  roi              Decimal   @default(0.0000) @db.Decimal(8, 4)
+  winRate          Decimal   @default(0.0000) @db.Decimal(6, 4)
+  elo              Int       @default(1000)
+  divisionScore    Decimal   @default(0.00) @db.Decimal(6, 2)
+  division         String    @default("BRONZE") @db.VarChar(20)
+  sharpScore       Decimal   @default(0.00) @db.Decimal(6, 2)
+  reliabilityScore Decimal   @default(0.00) @db.Decimal(6, 2)
+  clvAvg           Decimal?  @db.Decimal(8, 4)
+  currentStreak    Int       @default(0)
+  streakType       String    @default("none") @db.VarChar(10)
+  bestStreak       Int       @default(0)
+  archetype        String?   @db.VarChar(30)
+  flowState        String?   @db.VarChar(30)
+  isLive           Int       @default(0) @db.SmallInt
+  lastPickAt       DateTime? @db.Timestamp(6)
+  avgOdds          Decimal?  @db.Decimal(8, 4)
+  clvSum           Decimal   @default(0.0000) @db.Decimal(12, 4)
+  clvCount         Int       @default(0)
+  createdAt        DateTime? @default(now()) @db.Timestamp(6)
+  updatedAt        DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([division], map: "idx_ur_division")
+  @@index([elo(sort: Desc)], map: "idx_ur_elo")
+  @@index([roi(sort: Desc)], map: "idx_ur_roi")
+  @@index([updatedAt(sort: Desc)], map: "idx_ur_updated")
+  @@index([username], map: "idx_ur_username")
 }
