@@ -459,6 +459,8 @@ app.get('/picks/:id/clv', async (req, res) => {
   }
 })
 
+const flatPick = p => ({ ...p, username: p.user?.username ?? null })
+
 app.get('/picks', async (req, res) => {
   try {
     const { userId } = req.query
@@ -480,7 +482,7 @@ app.get('/picks', async (req, res) => {
         include: { user: { select: { username: true } } },
         orderBy: { createdAt: 'desc' }
       })
-      return res.json(picks)
+      return res.json(picks.map(flatPick))
     }
 
     // Fetch all picks for this tipster
@@ -491,7 +493,7 @@ app.get('/picks', async (req, res) => {
     })
 
     // Owner sees everything
-    if (viewerId === userId) return res.json(picks)
+    if (viewerId === userId) return res.json(picks.map(flatPick))
 
     // Check if viewer has an active subscription to this tipster
     let hasAccess = false
@@ -502,11 +504,11 @@ app.get('/picks', async (req, res) => {
       hasAccess = !!sub
     }
 
-    if (hasAccess) return res.json(picks)
+    if (hasAccess) return res.json(picks.map(flatPick))
 
     // Mask PREMIUM picks for everyone else
     const masked = picks.map(p => {
-      if (p.visibility !== 'PREMIUM') return p
+      if (p.visibility !== 'PREMIUM') return flatPick(p)
       return {
         id:         p.id,
         userId:     p.userId,
@@ -579,7 +581,7 @@ app.post('/picks', pickLimiter, requireAuth, async (req, res) => {
       },
       include: { user: { select: { username: true } } }
     })
-    res.json(pick)
+    res.json(flatPick(pick))
 
     // Notify followers asynchronously — do not block the response
     setImmediate(async () => {
