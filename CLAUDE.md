@@ -4,10 +4,10 @@
 LEDGR is a verified sports tipster platform. Bettors post picks publicly, results are auto-graded, and performance is permanently tracked. No edits, no deleted losses. Think FACEIT meets Chess.com for sports betting.
 
 ## Stack
-- **Backend**: Node.js + Express on Railway
+- **Backend**: Node.js + Express on Render (free tier)
 - **Database**: PostgreSQL via Supabase (Prisma ORM)
 - **Frontend**: Static HTML/CSS/JS on Vercel (separate repo: ledgr)
-- **Backend URL**: https://ledgr-backend-production-c132.up.railway.app
+- **Backend URL**: https://ledgr-backend-7hmh.onrender.com
 
 ## File Structure
 - `index.js` — main Express server, all API routes
@@ -44,7 +44,7 @@ LEDGR is a verified sports tipster platform. Bettors post picks publicly, result
 - GET /players — fetch squad from football API
 - POST /create-checkout — Stripe subscription
 
-## Environment Variables (in Railway)
+## Environment Variables (in Render)
 - DATABASE_URL — Supabase pooled connection
 - DIRECT_URL — Supabase direct connection
 - JWT_SECRET — token signing
@@ -57,7 +57,7 @@ LEDGR is a verified sports tipster platform. Bettors post picks publicly, result
 2. Picks lock when posted — no editing odds or stake
 3. Auto-grading runs every 10min via cron
 4. ELO calculated frontend-side from picks array (not stored in DB yet)
-5. Keep-alive ping every 10min to prevent Railway sleep
+5. Keep-alive ping every 10min via cron-job.org to prevent Render spin-down
 6. JWT tokens valid 90 days
 
 ## Frontend Repo

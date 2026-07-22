@@ -1601,7 +1601,7 @@ server.listen(PORT, async () => {
   await seedChatRooms().catch(e => console.error('Chat seed error:', e.message))
   wsEvents.startOnlineCountBroadcast()
 
-  // Self-ping every 10 minutes to keep Railway awake
+  // Self-ping every 10 minutes to keep Render awake
   setInterval(async () => {
     try {
       await axios.get(`http://localhost:${PORT}/ping`)
