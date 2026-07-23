@@ -12,8 +12,8 @@ require('dotenv').config()
 const { settlePick } = require('./autoVerify')
 const { closeSeason } = require('./seasons')
 const axios = require('axios')
-const BadWords = require('bad-words')
-const profanityFilter = new BadWords()
+const { Filter } = require('bad-words')
+const profanityFilter = new Filter()
 
 // ── WEB PUSH ──────────────────────────────────────────────────
 let vapidReady = false
