@@ -798,10 +798,16 @@ app.get('/news', async (req, res) => {
 })
 
 // ── FIXTURES ──────────────────────────────────────────────────
+const _fixturesCache = new Map()
+const FIXTURES_TTL = 5 * 60 * 1000
+
 app.get('/fixtures', async (req, res) => {
   try {
     const sport = req.query.sport || 'Soccer'
     const dateOffset = parseInt(req.query.dateOffset) || 0
+    const cacheKey = sport + '|' + dateOffset
+    const cached = _fixturesCache.get(cacheKey)
+    if (cached && Date.now() - cached.ts < FIXTURES_TTL) return res.json(cached.data)
 
     const date = new Date()
     date.setDate(date.getDate() + dateOffset)
@@ -859,6 +865,7 @@ app.get('/fixtures', async (req, res) => {
       } catch(e) { console.error('[fixtures] Failed to fetch', league, '-', e.response?.status || e.message); continue }
     }
 
+    if (allFixtures.length > 0) _fixturesCache.set(cacheKey, { data: allFixtures, ts: Date.now() })
     res.json(allFixtures)
   } catch (err) {
     res.status(500).json({ error: err.message })
