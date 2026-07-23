@@ -20,9 +20,10 @@ model User {
   verifyToken       String?
   verifyTokenExpiry DateTime?
   createdAt            DateTime           @default(now())
-  mutedUntil           DateTime?
-  violationCount       Int                @default(0)
-  lastViolationAt      DateTime?
+  mutedUntil                DateTime?
+  violationCount            Int                @default(0)
+  lastViolationAt           DateTime?
+  stripeConnectedAccountId  String?
   picks                Pick[]
   followers         Follow[]           @relation("UserFollowing")
   following         Follow[]           @relation("UserFollowers")
