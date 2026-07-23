@@ -24,6 +24,8 @@ model User {
   violationCount            Int                @default(0)
   lastViolationAt           DateTime?
   stripeConnectedAccountId  String?
+  subscriptionPriceCents    Int?
+  commissionOverridePercent Int?
   picks                Pick[]
   followers         Follow[]           @relation("UserFollowing")
   following         Follow[]           @relation("UserFollowers")
