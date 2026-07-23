@@ -856,7 +856,7 @@ app.get('/fixtures', async (req, res) => {
           };
         })
         allFixtures = allFixtures.concat(fixtures)
-      } catch(e) { continue }
+      } catch(e) { console.error('[fixtures] Failed to fetch', league, '-', e.response?.status || e.message); continue }
     }
 
     res.json(allFixtures)
