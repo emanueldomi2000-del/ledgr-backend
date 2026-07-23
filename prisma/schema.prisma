@@ -19,8 +19,11 @@ model User {
   emailVerified     Boolean            @default(false)
   verifyToken       String?
   verifyTokenExpiry DateTime?
-  createdAt         DateTime           @default(now())
-  picks             Pick[]
+  createdAt            DateTime           @default(now())
+  mutedUntil           DateTime?
+  violationCount       Int                @default(0)
+  lastViolationAt      DateTime?
+  picks                Pick[]
   followers         Follow[]           @relation("UserFollowing")
   following         Follow[]           @relation("UserFollowers")
   pushSubscriptions PushSubscription[]
@@ -322,4 +325,14 @@ model user_rankings {
   @@index([roi(sort: Desc)], map: "idx_ur_roi")
   @@index([updatedAt(sort: Desc)], map: "idx_ur_updated")
   @@index([username], map: "idx_ur_username")
+}
+
+model ModerationFlag {
+  id        String   @id @default(cuid())
+  userId    String
+  reason    String   // 'auto-mute' | 'admin-review'
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_modflag_user")
 }

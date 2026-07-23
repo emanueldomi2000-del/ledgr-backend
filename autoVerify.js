@@ -10,6 +10,8 @@ const { emitPickGraded }      = require('./ws-events')
 const prisma = new PrismaClient()
 const ODDS_API = 'https://api.the-odds-api.com/v4'
 
+const CHAT_RETENTION_DAYS = 90   // messaggi chat più vecchi di N giorni vengono eliminati ogni notte
+
 // ── Sport → Odds API league keys ──────────────────────────────
 const LEAGUES = {
   Soccer: [
@@ -30,7 +32,7 @@ const LEAGUES = {
     'tennis_atp_double',      'tennis_wta_double'
   ],
   Baseball:   ['baseball_mlb'],
-  'MMA/Boxing': ['mma_mixed_martial_arts']
+  'MMA/Boxing': ['mma_mixed_martial_arts', 'boxing_boxing']
 }
 
 // ── Per-run scores cache (reset each cron tick) ───────────────
@@ -40,7 +42,7 @@ async function getScores(league) {
   if (_scoresCache.has(league)) return _scoresCache.get(league)
   try {
     const r = await axios.get(`${ODDS_API}/sports/${league}/scores`, {
-      params: { apiKey: process.env.ODDS_API_KEY, daysFrom: 3 },
+      params: { apiKey: process.env.ODDS_API_KEY, daysFrom: 7 },
       timeout: 8000
     })
     const games = r.data || []
@@ -114,6 +116,13 @@ function getScoreNums(game) {
 function gradeSoccer(market, homeGoals, awayGoals, homeTeam, awayTeam) {
   const m     = market.toLowerCase()
   const total = homeGoals + awayGoals
+
+  // DNB — must run before 1X2 because "Home Win (DNB)" matches /\bhome win\b/
+  if (/\(dnb\)/.test(m)) {
+    if (homeGoals === awayGoals) return 'push'
+    if (/home/.test(m)) return homeGoals > awayGoals ? 'win' : 'loss'
+    if (/away/.test(m)) return awayGoals > homeGoals ? 'win' : 'loss'
+  }
 
   // 1X2
   if (/\bhome win\b/.test(m) || m === '1' || /^\(1\)$/.test(m))       return homeGoals > awayGoals ? 'win' : 'loss'
@@ -277,6 +286,44 @@ function gradeMMA(market, homeScore, awayScore, homeTeam, awayTeam) {
   return null
 }
 
+// ── MLB grader ────────────────────────────────────────────────
+// Odds API MLB scores: home/away = total runs scored in the completed game
+function gradeMLB(market, homeRuns, awayRuns, homeTeam, awayTeam) {
+  const m     = market.toLowerCase()
+  const total = homeRuns + awayRuns
+
+  // Moneyline
+  if (/\bhome win\b/.test(m)) return homeRuns > awayRuns ? 'win' : 'loss'
+  if (/\baway win\b/.test(m)) return awayRuns > homeRuns ? 'win' : 'loss'
+
+  // Named team winner — team name present, no spread or O/U keyword
+  const htWord = (homeTeam || '').toLowerCase().split(' ').pop()
+  const awWord = (awayTeam || '').toLowerCase().split(' ').pop()
+  if (htWord && m.includes(htWord) && !m.includes('over') && !m.includes('under') && !/[+-]\d/.test(m))
+    return homeRuns > awayRuns ? 'win' : 'loss'
+  if (awWord && m.includes(awWord) && !m.includes('over') && !m.includes('under') && !/[+-]\d/.test(m))
+    return awayRuns > homeRuns ? 'win' : 'loss'
+
+  // Run line — "Home -1.5", "Away -1.5", or team-name + line
+  // Bare "+1.5" / "-1.5" with no team prefix cannot be attributed to a side — return null
+  const rl = m.match(/([+-]\d+(?:\.\d+)?)/)
+  if (rl && !m.includes('over') && !m.includes('under')) {
+    const line   = parseFloat(rl[1])
+    const isHome = m.includes('home') || (htWord && m.includes(htWord))
+    const isAway = m.includes('away') || (awWord && m.includes(awWord))
+    if (!isHome && !isAway) return null
+    const diff = isAway ? awayRuns - homeRuns : homeRuns - awayRuns
+    return (diff + line) > 0 ? 'win' : 'loss'
+  }
+
+  // Over/Under total runs
+  const ou = parseOU(m)
+  if (ou) return ouResult(ou, total)
+
+  // F5 innings and player HR props require inning/player data not in Odds API scores
+  return null
+}
+
 // ── Grader router ─────────────────────────────────────────────
 function grade(pick, game) {
   const scores = getScoreNums(game)
@@ -289,6 +336,7 @@ function grade(pick, game) {
     case 'Basketball':return gradeNBA(pick.market, home, away, pick.homeTeam, pick.awayTeam)
     case 'Football':  return gradeNFL(pick.market, home, away, pick.homeTeam, pick.awayTeam)
     case 'Tennis':    return gradeTennis(pick.market, home, away, pick.homeTeam, pick.awayTeam)
+    case 'Baseball':  return gradeMLB(pick.market, home, away, pick.homeTeam, pick.awayTeam)
     case 'MMA/Boxing':return gradeMMA(pick.market, home, away, pick.homeTeam, pick.awayTeam)
     default:          return null
   }
@@ -392,6 +440,7 @@ async function pushToTipster(userId, result, pick, pnl) {
 async function settlePick(pick, result) {
   const pnl = result === 'win'
     ? parseFloat(pick.stake) * (parseFloat(pick.odds) - 1)
+    : result === 'push' ? 0
     : -parseFloat(pick.stake)
 
   // Snapshot rankings state BEFORE recalc (used for delta events)
@@ -506,3 +555,18 @@ cron.schedule('*/5 * * * *', async () => {
 })
 
 console.log('🤖 Auto-verify started — every 5 minutes')
+
+// ── Cron — purge old chat messages (daily at 03:00 UTC) ───────
+cron.schedule('0 3 * * *', async () => {
+  const cutoff = new Date(Date.now() - CHAT_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  try {
+    const { count } = await prisma.chatMessage.deleteMany({
+      where: { createdAt: { lt: cutoff } }
+    })
+    if (count > 0) console.log(`🧹 Purged ${count} chat messages older than ${CHAT_RETENTION_DAYS}d`)
+  } catch (err) {
+    console.error('❌ Chat purge error:', err.message)
+  }
+})
+
+module.exports = { settlePick }

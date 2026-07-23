@@ -12,6 +12,8 @@ require('dotenv').config()
 const { settlePick } = require('./autoVerify')
 const { closeSeason } = require('./seasons')
 const axios = require('axios')
+const BadWords = require('bad-words')
+const profanityFilter = new BadWords()
 
 // ── WEB PUSH ──────────────────────────────────────────────────
 let vapidReady = false
@@ -1295,6 +1297,69 @@ app.post('/chat/rooms/:id/messages', requireAuth, chatLimiter, async (req, res) 
     const room = await prisma.chatRoom.findUnique({ where: { id: req.params.id } })
     if (!room) return res.status(404).json({ error: 'Room not found' })
 
+    // ── MODERATION ────────────────────────────────────────────────
+    const sender = await prisma.user.findUnique({ where: { id: req.userId } })
+
+    // 1. Mute check
+    if (sender.mutedUntil && sender.mutedUntil > new Date()) {
+      return res.status(403).json({
+        error: `You are temporarily muted until ${sender.mutedUntil.toUTCString()}`
+      })
+    }
+
+    // 2. Profanity check
+    if (profanityFilter.isProfane(content.trim())) {
+      const now = new Date()
+      // Reset violation counter if last violation was >24h ago
+      const windowExpired = !sender.lastViolationAt ||
+        (now - sender.lastViolationAt) > 24 * 60 * 60 * 1000
+      const newCount = windowExpired ? 1 : sender.violationCount + 1
+
+      if (newCount >= 3) {
+        // 3 violations in window → mute for 1 hour, reset counter
+        const mutedUntil = new Date(now.getTime() + 60 * 60 * 1000)
+        await prisma.user.update({
+          where: { id: req.userId },
+          data: { mutedUntil, violationCount: 0, lastViolationAt: now }
+        })
+        // Log the mute
+        await prisma.moderationFlag.create({
+          data: {
+            userId: req.userId,
+            reason: 'auto-mute',
+            detail: `@${sender.username} muted until ${mutedUntil.toISOString()} after 3 violations in 24h`
+          }
+        })
+        // If ≥3 auto-mutes in last 30 days → flag for manual admin review
+        const muteCount30d = await prisma.moderationFlag.count({
+          where: {
+            userId: req.userId,
+            reason: 'auto-mute',
+            createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) }
+          }
+        })
+        if (muteCount30d >= 3) {
+          await prisma.moderationFlag.create({
+            data: {
+              userId: req.userId,
+              reason: 'admin-review',
+              detail: `@${sender.username} accumulated ${muteCount30d} auto-mutes in 30 days — manual ban decision required`
+            }
+          })
+          console.warn(`🚨 MODERATION: @${sender.username} flagged for admin review (${muteCount30d} mutes/30d)`)
+        }
+      } else {
+        // Accumulate violation within current 24h window
+        await prisma.user.update({
+          where: { id: req.userId },
+          data: { violationCount: newCount, lastViolationAt: now }
+        })
+      }
+
+      return res.status(400).json({ error: 'Message blocked — please keep the community respectful' })
+    }
+    // ── END MODERATION ────────────────────────────────────────────
+
     const message = await prisma.chatMessage.create({
       data:    { roomId: req.params.id, userId: req.userId, content: content.trim() },
       include: { user: { select: { id: true, username: true } } }
@@ -1497,6 +1562,32 @@ app.get('/admin/blacklisted-ips', adminOnly, (req, res) => {
   const list = []
   ipBlacklist.forEach((meta, ip) => list.push({ ip, ...meta }))
   res.json({ count: list.length, ips: list })
+})
+
+// ── ADMIN: MODERATION FLAGS ───────────────────────────────────
+app.get('/admin/moderation-flags', adminOnly, async (req, res) => {
+  try {
+    const flags = await prisma.moderationFlag.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 200
+    })
+    res.json(flags)
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// ── ADMIN: UNMUTE USER ────────────────────────────────────────
+app.post('/admin/users/:id/unmute', adminOnly, async (req, res) => {
+  try {
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { mutedUntil: null, violationCount: 0 }
+    })
+    res.json({ ok: true, username: updated.username })
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // ── ADMIN: FORCE SETTLE PICK ──────────────────────────────────
