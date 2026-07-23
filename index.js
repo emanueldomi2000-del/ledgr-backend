@@ -1003,13 +1003,46 @@ app.post('/stripe-webhook',
   }
 )
 
+app.patch('/profile/subscription-price', requireAuth, async (req, res) => {
+  try {
+    const { priceCents } = req.body
+    const price = parseInt(priceCents)
+    if (!Number.isInteger(price) || price < 100 || price > 50000) {
+      return res.status(400).json({ error: 'priceCents must be an integer between 100 (€1) and 50000 (€500)' })
+    }
+    const user = await prisma.user.update({
+      where: { id: req.userId },
+      data:  { subscriptionPriceCents: price },
+      select: { id: true, username: true, subscriptionPriceCents: true }
+    })
+    res.json(user)
+  } catch (err) {
+    console.error('subscription-price error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.post('/create-checkout', requireAuth, async (req, res) => {
   try {
-    const { tipsterId, tipsterUsername, priceAmount } = req.body
-    if (!tipsterUsername) return res.status(400).json({ error: 'tipsterUsername required' })
+    const { tipsterId } = req.body
+    if (!tipsterId) return res.status(400).json({ error: 'tipsterId required' })
 
-    const amount   = Math.max(100, parseInt(priceAmount) || 1000)   // cents min €1
-    const followerId = req.userId
+    const tipster = await prisma.user.findUnique({ where: { id: tipsterId } })
+    if (!tipster) return res.status(404).json({ error: 'Tipster not found' })
+
+    if (!tipster.subscriptionPriceCents) {
+      return res.status(400).json({ error: 'This tipster has not set a subscription price yet' })
+    }
+    if (!tipster.stripeConnectedAccountId) {
+      return res.status(400).json({ error: 'This tipster has not completed payout setup yet' })
+    }
+
+    const account = await stripe.accounts.retrieve(tipster.stripeConnectedAccountId)
+    if (!account.charges_enabled) {
+      return res.status(400).json({ error: 'This tipster has not completed payout setup yet' })
+    }
+
+    const commissionPercent = tipster.commissionOverridePercent ?? 15
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -1017,18 +1050,22 @@ app.post('/create-checkout', requireAuth, async (req, res) => {
         price_data: {
           currency: 'eur',
           product_data: {
-            name:        `LEDGR — Subscribe to @${tipsterUsername}`,
-            description: `Monthly premium picks from @${tipsterUsername}`
+            name:        `LEDGR — Subscribe to @${tipster.username}`,
+            description: `Monthly premium picks from @${tipster.username}`
           },
-          unit_amount: amount,
+          unit_amount: tipster.subscriptionPriceCents,
           recurring:   { interval: 'month' }
         },
         quantity: 1
       }],
-      mode:        'subscription',
-      metadata:    { followerId, tipsterId: tipsterId || '' },
-      success_url: `https://getledgr.bet/subscribe/success?u=${tipsterUsername}`,
-      cancel_url:  `https://getledgr.bet/subscribe/cancel?u=${tipsterUsername}`
+      mode:              'subscription',
+      subscription_data: {
+        application_fee_percent: commissionPercent,
+        transfer_data:           { destination: tipster.stripeConnectedAccountId }
+      },
+      metadata:    { followerId: req.userId, tipsterId },
+      success_url: `https://getledgr.bet/subscribe/success?u=${tipster.username}`,
+      cancel_url:  `https://getledgr.bet/subscribe/cancel?u=${tipster.username}`
     })
 
     res.json({ url: session.url })
