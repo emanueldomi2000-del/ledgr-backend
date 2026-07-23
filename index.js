@@ -1038,6 +1038,64 @@ app.post('/create-checkout', requireAuth, async (req, res) => {
   }
 })
 
+// ── STRIPE CONNECT — ONBOARDING ───────────────────────────────
+app.post('/stripe/connect/onboard', requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } })
+
+    let accountId = user.stripeConnectedAccountId
+
+    // Create Express account only if tipster doesn't have one yet
+    if (!accountId) {
+      const account = await stripe.accounts.create({
+        type: 'express',
+        capabilities: {
+          card_payments: { requested: true },
+          transfers:     { requested: true }
+        }
+      })
+      accountId = account.id
+      await prisma.user.update({
+        where: { id: req.userId },
+        data:  { stripeConnectedAccountId: accountId }
+      })
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account:     accountId,
+      type:        'account_onboarding',
+      refresh_url: 'https://getledgr.bet/settings?stripe=refresh',
+      return_url:  'https://getledgr.bet/settings?stripe=success'
+    })
+
+    res.json({ url: accountLink.url })
+  } catch (err) {
+    console.error('Stripe Connect onboard error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/stripe/connect/status', requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } })
+
+    if (!user.stripeConnectedAccountId) {
+      return res.json({ connected: false, onboardingComplete: false })
+    }
+
+    const account = await stripe.accounts.retrieve(user.stripeConnectedAccountId)
+
+    res.json({
+      connected:          true,
+      onboardingComplete: account.charges_enabled,
+      detailsSubmitted:   account.details_submitted
+    })
+  } catch (err) {
+    console.error('Stripe Connect status error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.get('/subscriptions/:userId', async (req, res) => {
   try {
     const subs = await prisma.subscription.findMany({
