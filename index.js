@@ -594,6 +594,24 @@ app.get('/picks/:id/clv', async (req, res) => {
 
 const flatPick = p => ({ ...p, username: p.user?.username ?? null })
 
+// Premium masking rules (shared between global feed and per-tipster views):
+// - pending (live, actionable tip): teaser massimo — nasconde anche evento/squadre
+// - settled (win/loss/push/void): visibile completo — il track record è pubblico,
+//   il paywall protegge solo il consiglio azionabile, non la storia
+function maskPremiumPick(p) {
+  if (p.result !== 'pending') return flatPick(p)
+  return {
+    id:         p.id,
+    userId:     p.userId,
+    username:   p.user?.username ?? null,
+    sport:      p.sport,
+    createdAt:  p.createdAt,
+    result:     'pending',
+    visibility: 'PREMIUM',
+    _teaser:    true
+  }
+}
+
 app.get('/picks', async (req, res) => {
   try {
     const { userId } = req.query
@@ -609,13 +627,14 @@ app.get('/picks', async (req, res) => {
     }
 
     if (!userId) {
-      // No filter: return only PUBLIC picks from the global feed
+      // Global feed: return ALL picks — PUBLIC complete, PREMIUM masked per rules
       const picks = await prisma.pick.findMany({
-        where: { visibility: 'PUBLIC' },
         include: { user: { select: { username: true } } },
         orderBy: { createdAt: 'desc' }
       })
-      return res.json(picks.map(flatPick))
+      return res.json(picks.map(p =>
+        p.visibility === 'PREMIUM' ? maskPremiumPick(p) : flatPick(p)
+      ))
     }
 
     // Fetch all picks for this tipster
@@ -639,22 +658,10 @@ app.get('/picks', async (req, res) => {
 
     if (hasAccess) return res.json(picks.map(flatPick))
 
-    // Mask PREMIUM picks for everyone else
-    const masked = picks.map(p => {
-      if (p.visibility !== 'PREMIUM') return flatPick(p)
-      return {
-        id:         p.id,
-        userId:     p.userId,
-        username:   p.user?.username ?? null,
-        sport:      p.sport,
-        event:      p.event,
-        createdAt:  p.createdAt,
-        result:     p.result,
-        visibility: 'PREMIUM',
-        _teaser:    true
-      }
-    })
-    res.json(masked)
+    // Mask PREMIUM picks for non-subscribers — same rules as global feed
+    res.json(picks.map(p =>
+      p.visibility === 'PREMIUM' ? maskPremiumPick(p) : flatPick(p)
+    ))
   } catch (err) {
     console.error('GET /picks error:', err)
     res.status(500).json({ error: 'Failed to load picks', detail: err.message })
