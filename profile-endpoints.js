@@ -67,20 +67,23 @@ function registerRoutes(app, prisma, requireAuth) {
         }
       }
 
+      const userRow = await prisma.user.findUnique({ where: { username }, select: { subscriptionPriceCents: true } })
+
       return res.json({
-        archetype:        archetype,
-        archetypeSource:  archetypeSource,
-        banner:           p.banner || 'default',
-        border:           p.border || 'clean',
-        theme:            p.theme || 'default',
-        fav_sports:       p.fav_sports
-                            ? (typeof p.fav_sports === 'string' ? JSON.parse(p.fav_sports) : p.fav_sports)
-                            : [],
-        bio:              p.bio || '',
-        social_twitter:   p.social_twitter || null,
-        social_instagram: p.social_instagram || null,
-        avatar_b64:       p.avatar_b64 || null,
-        banner_b64:       p.banner_b64 || null,
+        archetype:               archetype,
+        archetypeSource:         archetypeSource,
+        banner:                  p.banner || 'default',
+        border:                  p.border || 'clean',
+        theme:                   p.theme || 'default',
+        fav_sports:              p.fav_sports
+                                   ? (typeof p.fav_sports === 'string' ? JSON.parse(p.fav_sports) : p.fav_sports)
+                                   : [],
+        bio:                     p.bio || '',
+        social_twitter:          p.social_twitter || null,
+        social_instagram:        p.social_instagram || null,
+        avatar_b64:              p.avatar_b64 || null,
+        banner_b64:              p.banner_b64 || null,
+        subscriptionPriceCents:  userRow?.subscriptionPriceCents ?? null,
       })
     } catch (e) {
       console.error('GET /profile error:', e)
@@ -187,20 +190,23 @@ function registerRoutes(app, prisma, requireAuth) {
         }
       }
 
+      const userRow = await prisma.user.findUnique({ where: { id: userId }, select: { subscriptionPriceCents: true } })
+
       return res.json({
-        archetype:        archetype,
-        archetypeSource:  archetypeSource,
-        banner:           p.banner || 'default',
-        border:           p.border || 'clean',
-        theme:            p.theme || 'default',
-        fav_sports:       p.fav_sports
-                            ? (typeof p.fav_sports === 'string' ? JSON.parse(p.fav_sports) : p.fav_sports)
-                            : [],
-        bio:              p.bio || '',
-        social_twitter:   p.social_twitter || null,
-        social_instagram: p.social_instagram || null,
-        avatar_b64:       p.avatar_b64 || null,
-        banner_b64:       p.banner_b64 || null,
+        archetype:               archetype,
+        archetypeSource:         archetypeSource,
+        banner:                  p.banner || 'default',
+        border:                  p.border || 'clean',
+        theme:                   p.theme || 'default',
+        fav_sports:              p.fav_sports
+                                   ? (typeof p.fav_sports === 'string' ? JSON.parse(p.fav_sports) : p.fav_sports)
+                                   : [],
+        bio:                     p.bio || '',
+        social_twitter:          p.social_twitter || null,
+        social_instagram:        p.social_instagram || null,
+        avatar_b64:              p.avatar_b64 || null,
+        banner_b64:              p.banner_b64 || null,
+        subscriptionPriceCents:  userRow?.subscriptionPriceCents ?? null,
       })
     } catch (e) {
       console.error('GET /profile error:', e)
