@@ -692,6 +692,14 @@ app.post('/picks', pickLimiter, requireAuth, async (req, res) => {
     if (isNaN(parsedOdds) || parsedOdds < 1.01 || parsedOdds > 1000) {
       return res.status(400).json({ error: 'Odds must be between 1.01 and 1000' })
     }
+    const parsedStake = parseFloat(stake)
+    if (!isFinite(parsedStake) || parsedStake <= 0 || parsedStake > 10000) {
+      return res.status(400).json({ error: 'Stake must be a number between 0.01 and 10000' })
+    }
+    const parsedPnl = (pnl !== undefined && pnl !== null && pnl !== '') ? parseFloat(pnl) : 0
+    if (!isFinite(parsedPnl) || Math.abs(parsedPnl) > 1000000) {
+      return res.status(400).json({ error: 'pnl value is invalid or out of range' })
+    }
     if (userId !== req.userId) return res.status(403).json({ error: 'userId mismatch' })
 
     const safeStakeType = stakeType || 'units'
@@ -719,10 +727,10 @@ app.post('/picks', pickLimiter, requireAuth, async (req, res) => {
         awayTeam: awayTeam || null,
         market,
         odds: parseFloat(odds),
-        stake: parseFloat(stake),
+        stake: parsedStake,
         seasonId,
         result: result || 'pending',
-        pnl: parseFloat(pnl) || 0,
+        pnl: parsedPnl,
         stakeType: safeStakeType,
         confidence: confidence || null,
         reasoning: _sanitizeReasoning(reasoning),
