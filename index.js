@@ -1,5 +1,6 @@
 const express       = require('express')
 const http          = require('http')
+const dns           = require('dns')
 const cors          = require('cors')
 const bcrypt        = require('bcryptjs')
 const jwt           = require('jsonwebtoken')
@@ -294,12 +295,21 @@ async function adminOnly(req, res, next) {
 }
 
 // ── EMAIL ─────────────────────────────────────────────────────
+// Force IPv4 for all DNS lookups in this process — Render free tier does not
+// route IPv6 outbound, causing ENETUNREACH when nodemailer resolves smtp.gmail.com.
+dns.setDefaultResultOrder('ipv4first')
+
 const mailer = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS   // Gmail App Password (not account password)
-  }
+  },
+  connectionTimeout: 10000,
+  greetingTimeout:   10000,
+  socketTimeout:     15000
 })
 
 function genCode() {
@@ -445,11 +455,8 @@ app.post('/auth/register', authLimiter, async (req, res) => {
       }
     })
 
-    try {
-      await sendVerificationEmail(user.email, user.username, code)
-    } catch (emailErr) {
-      console.error('Verification email failed:', emailErr)
-    }
+    sendVerificationEmail(user.email, user.username, code)
+      .catch(err => console.error('Verification email failed:', err))
 
     res.json({
       message: 'Check your email to verify your account',
@@ -509,7 +516,8 @@ app.post('/auth/resend-verification', authLimiter, async (req, res) => {
       data: { verifyToken: code, verifyTokenExpiry: expiry }
     })
 
-    await sendVerificationEmail(user.email, user.username, code)
+    sendVerificationEmail(user.email, user.username, code)
+      .catch(err => console.error('Verification email failed:', err))
 
     res.json({ message: 'Verification code resent — check your email' })
   } catch (err) {
