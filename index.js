@@ -6,7 +6,8 @@ const jwt           = require('jsonwebtoken')
 const nodemailer    = require('nodemailer')
 const webpush       = require('web-push')
 const WebSocket     = require('ws')
-const rateLimit     = require('express-rate-limit')
+const rateLimit        = require('express-rate-limit')
+const { ipKeyGenerator } = require('express-rate-limit')
 const { PrismaClient } = require('@prisma/client')
 require('dotenv').config()
 const { settlePick } = require('./autoVerify')
@@ -36,6 +37,8 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 const app    = express()
 const prisma = new PrismaClient()
 
+app.set('trust proxy', 1)
+
 app.use(cors())
 app.use(express.json())
 
@@ -47,7 +50,8 @@ const generalLimiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: TOO_MANY
+  message: TOO_MANY,
+  skip: (req) => req.path === '/' || req.path === '/ping' || req.path === '/health'
 })
 
 const authLimiter = rateLimit({
@@ -61,7 +65,7 @@ const authLimiter = rateLimit({
 const pickLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,   // 1 hour
   max: 20,
-  keyGenerator: (req) => req.body?.userId || req.ip,  // per user, not just IP
+  keyGenerator: (req) => req.body?.userId || ipKeyGenerator(req.ip),
   standardHeaders: true,
   legacyHeaders: false,
   message: TOO_MANY
@@ -78,7 +82,7 @@ const followLimiter = rateLimit({
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,    // 1 minute
   max: 30,
-  keyGenerator: (req) => req.userId || req.ip,
+  keyGenerator: (req) => req.userId || ipKeyGenerator(req.ip),
   standardHeaders: true,
   legacyHeaders: false,
   message: TOO_MANY
