@@ -1,10 +1,8 @@
 const express       = require('express')
 const http          = require('http')
-const dns           = require('dns')
 const cors          = require('cors')
 const bcrypt        = require('bcryptjs')
 const jwt           = require('jsonwebtoken')
-const nodemailer    = require('nodemailer')
 const webpush       = require('web-push')
 const WebSocket     = require('ws')
 const rateLimit        = require('express-rate-limit')
@@ -22,7 +20,7 @@ let vapidReady = false
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   try {
     webpush.setVapidDetails(
-      'mailto:' + (process.env.EMAIL_USER || 'admin@getledgr.bet'),
+      'mailto:admin@getledgr.bet',
       process.env.VAPID_PUBLIC_KEY,
       process.env.VAPID_PRIVATE_KEY
     )
@@ -295,22 +293,6 @@ async function adminOnly(req, res, next) {
 }
 
 // ── EMAIL ─────────────────────────────────────────────────────
-// Force IPv4 for all DNS lookups in this process — Render free tier does not
-// route IPv6 outbound, causing ENETUNREACH when nodemailer resolves smtp.gmail.com.
-dns.setDefaultResultOrder('ipv4first')
-
-const mailer = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS   // Gmail App Password (not account password)
-  },
-  connectionTimeout: 10000,
-  greetingTimeout:   10000,
-  socketTimeout:     15000
-})
 
 function genCode() {
   return String(Math.floor(100000 + Math.random() * 900000))
@@ -381,16 +363,27 @@ function verifyEmailHTML(username, code) {
 }
 
 async function sendVerificationEmail(email, username, code) {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('⚠️  EMAIL_USER / EMAIL_PASS not set — skipping verification email')
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('⚠️  RESEND_API_KEY not set — skipping verification email')
     return
   }
-  await mailer.sendMail({
-    from: `"LEDGR" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: `${code} is your LEDGR verification code`,
-    html: verifyEmailHTML(username, code)
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: 'LEDGR <noreply@getledgr.bet>',
+      to: [email],
+      subject: `${code} is your LEDGR verification code`,
+      html: verifyEmailHTML(username, code)
+    })
   })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Resend API ${res.status}: ${body}`)
+  }
 }
 
 // ── NEW MODULES ───────────────────────────────────────────────
