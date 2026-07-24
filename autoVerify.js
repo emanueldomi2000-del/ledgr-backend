@@ -35,28 +35,44 @@ const LEAGUES = {
   'MMA/Boxing': ['mma_mixed_martial_arts', 'boxing_boxing']
 }
 
-// ── Per-run scores cache (reset each cron tick) ───────────────
-let _scoresCache = new Map()
+// ── Scores cache (persistent across ticks, TTL 30 min) ────────
+// Previously cleared every 5-min cron tick → burned 100k+ req/month.
+// Now entries expire individually; same league not re-fetched within TTL.
+const SCORES_TTL   = 30 * 60 * 1000
+const _scoresCache = new Map()   // league → { data: Game[], ts: number }
 
 async function getScores(league) {
-  if (_scoresCache.has(league)) return _scoresCache.get(league)
+  const cached = _scoresCache.get(league)
+  if (cached && Date.now() - cached.ts < SCORES_TTL) return cached.data
   try {
     const r = await axios.get(`${ODDS_API}/sports/${league}/scores`, {
       params: { apiKey: process.env.ODDS_API_KEY, daysFrom: 7 },
       timeout: 8000
     })
-    const games = r.data || []
-    _scoresCache.set(league, games)
-    return games
+    const data = r.data || []
+    _scoresCache.set(league, { data, ts: Date.now() })
+    return data
   } catch (_) {
     return []
   }
 }
 
+// fixtureId → league key (immutable once a game is found; persists forever)
+const _fixtureLeagueMap = new Map()
+
+// CLV odds cache (keyed by "league|fixtureId", TTL 30 min)
+const CLV_TTL   = 30 * 60 * 1000
+const _clvCache = new Map()
+
 // Returns the completed game object, or null
 async function findGame(pick) {
-  const leagues = LEAGUES[pick.sport]
-  if (!leagues) return null
+  const sportLeagues = LEAGUES[pick.sport]
+  if (!sportLeagues) return null
+
+  // If we already know which league this fixture lives in, check only that one.
+  // Falls back to all sport leagues for picks without fixtureId or on first run.
+  const knownLeague = pick.fixtureId ? _fixtureLeagueMap.get(pick.fixtureId) : null
+  const leagues     = knownLeague ? [knownLeague] : sportLeagues
 
   const eventLower = (pick.event || '').toLowerCase()
   const htLower    = (pick.homeTeam || '').toLowerCase()
@@ -68,19 +84,24 @@ async function findGame(pick) {
       if (!g.completed) continue
 
       // Primary: Odds API event ID match
-      if (pick.fixtureId && g.id === pick.fixtureId) return g
+      if (pick.fixtureId && g.id === pick.fixtureId) {
+        _fixtureLeagueMap.set(pick.fixtureId, league)
+        return g
+      }
 
-      // Fallback: team name match via pick.event or homeTeam/awayTeam
+      // Fallback: team name match
       const home = g.home_team.toLowerCase()
       const away = g.away_team.toLowerCase()
-
       const nameMatch =
         (htLower && home.includes(htLower)) ||
         (awLower && away.includes(awLower)) ||
         eventLower.includes(home) ||
         eventLower.includes(away)
 
-      if (nameMatch) return g
+      if (nameMatch) {
+        if (pick.fixtureId) _fixtureLeagueMap.set(pick.fixtureId, league)
+        return g
+      }
     }
   }
   return null
@@ -378,31 +399,44 @@ async function recalculateSharpScore(userId) {
 // ── CLV ───────────────────────────────────────────────────────
 async function fetchClosingOdds(pick) {
   if (!pick.fixtureId || !process.env.ODDS_API_KEY) return null
-  const leagues = LEAGUES[pick.sport] || []
-  const m       = pick.market.toLowerCase()
+  const m = pick.market.toLowerCase()
+
+  // Use cached league mapping when available; otherwise iterate sport leagues
+  const knownLeague = _fixtureLeagueMap.get(pick.fixtureId)
+  const leagues     = knownLeague ? [knownLeague] : (LEAGUES[pick.sport] || [])
 
   for (const league of leagues) {
-    try {
-      const r = await axios.get(`${ODDS_API}/sports/${league}/odds`, {
-        params: { apiKey: process.env.ODDS_API_KEY, regions: 'eu', markets: 'h2h', oddsFormat: 'decimal', eventIds: pick.fixtureId },
-        timeout: 6000
-      })
-      const game = r.data?.[0]
-      if (!game) continue
+    const cacheKey = league + '|' + pick.fixtureId
+    const cachedEntry = _clvCache.get(cacheKey)
+    let gameData = (cachedEntry && Date.now() - cachedEntry.ts < CLV_TTL)
+      ? cachedEntry.data
+      : null
 
-      let best = null
-      for (const bk of (game.bookmakers || [])) {
-        const h2h     = bk.markets?.find(x => x.key === 'h2h')
-        if (!h2h) continue
-        let outcome = null
-        if (/home win|^1$/.test(m))       outcome = h2h.outcomes.find(o => o.name === game.home_team)
-        else if (/away win|^2$/.test(m))  outcome = h2h.outcomes.find(o => o.name === game.away_team)
-        else if (/draw|^x$/.test(m))      outcome = h2h.outcomes.find(o => o.name === 'Draw')
-        else                               outcome = h2h.outcomes.find(o => o.name === game.home_team)
-        if (outcome && (!best || outcome.price > best)) best = outcome.price
-      }
-      if (best) return parseFloat(best.toFixed(3))
-    } catch (_) {}
+    if (!gameData) {
+      try {
+        const r = await axios.get(`${ODDS_API}/sports/${league}/odds`, {
+          params: { apiKey: process.env.ODDS_API_KEY, regions: 'eu', markets: 'h2h', oddsFormat: 'decimal', eventIds: pick.fixtureId },
+          timeout: 6000
+        })
+        gameData = r.data?.[0] || null
+        _clvCache.set(cacheKey, { data: gameData, ts: Date.now() })
+      } catch (_) { continue }
+    }
+
+    if (!gameData) continue
+
+    let best = null
+    for (const bk of (gameData.bookmakers || [])) {
+      const h2h = bk.markets?.find(x => x.key === 'h2h')
+      if (!h2h) continue
+      let outcome = null
+      if (/home win|^1$/.test(m))       outcome = h2h.outcomes.find(o => o.name === gameData.home_team)
+      else if (/away win|^2$/.test(m))  outcome = h2h.outcomes.find(o => o.name === gameData.away_team)
+      else if (/draw|^x$/.test(m))      outcome = h2h.outcomes.find(o => o.name === 'Draw')
+      else                               outcome = h2h.outcomes.find(o => o.name === gameData.home_team)
+      if (outcome && (!best || outcome.price > best)) best = outcome.price
+    }
+    if (best) return parseFloat(best.toFixed(3))
   }
   return null
 }
@@ -542,10 +576,12 @@ function sportEmoji(sport) {
   return { Soccer:'⚽', Basketball:'🏀', Football:'🏈', Tennis:'🎾', Baseball:'⚾', 'MMA/Boxing':'🥊' }[sport] || '🎯'
 }
 
-// ── Cron — every 5 minutes ────────────────────────────────────
-cron.schedule('*/5 * * * *', async () => {
+// ── Cron — every 30 minutes ───────────────────────────────────
+// Was every 5 min (288 ticks/day). Results don't change every 5 min;
+// 30-min cadence + persistent TTL cache cuts API calls by ~97%.
+// 0 pending picks → 0 API calls (verifyAllPendingPicks returns early).
+cron.schedule('*/30 * * * *', async () => {
   console.log(`\n🤖 Auto-verify @ ${new Date().toLocaleTimeString()}`)
-  _scoresCache.clear()   // fresh data each run
   try {
     await verifyAllPendingPicks()
     console.log('✅ Auto-verify done\n')
@@ -554,7 +590,7 @@ cron.schedule('*/5 * * * *', async () => {
   }
 })
 
-console.log('🤖 Auto-verify started — every 5 minutes')
+console.log('🤖 Auto-verify started — every 30 minutes')
 
 // ── Cron — purge old chat messages (daily at 03:00 UTC) ───────
 cron.schedule('0 3 * * *', async () => {
