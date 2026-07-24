@@ -675,6 +675,12 @@ app.post('/picks', pickLimiter, requireAuth, async (req, res) => {
     if (!userId || !event || !market || !odds || !stake) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
+
+    const VALID_SPORTS = ['Soccer','Basketball','Football','Tennis','Baseball','MMA/Boxing']
+    if (!VALID_SPORTS.includes(sport)) {
+      return res.status(400).json({ error: 'invalid_sport', allowed: VALID_SPORTS })
+    }
+
     const parsedOdds = parseFloat(odds)
     if (isNaN(parsedOdds) || parsedOdds < 1.01 || parsedOdds > 1000) {
       return res.status(400).json({ error: 'Odds must be between 1.01 and 1000' })
