@@ -433,7 +433,16 @@ function registerRoutes(app, prisma, requireInternal) {
       `
       const rank = Number(rankRows[0].rank)
 
-      res.json({ ...formatRankingRow(r, recentPicks), rank })
+      const totalRows = await prisma.$queryRaw`SELECT COUNT(*) AS cnt FROM user_rankings`
+      const totalTipsters = Number(totalRows[0].cnt)
+
+      const seasonResults = await prisma.seasonResult.findMany({
+        where:   { userId: r.userId },
+        select:  { rank: true, roi: true, season: { select: { number: true, name: true } } },
+        orderBy: { createdAt: 'asc' },
+      })
+
+      res.json({ ...formatRankingRow(r, recentPicks), rank, totalTipsters, seasonResults })
     } catch (e) {
       console.error('GET /rankings/:username error:', e)
       res.status(500).json({ error: 'Server error' })
