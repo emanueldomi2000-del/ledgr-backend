@@ -1058,6 +1058,11 @@ app.post('/create-checkout', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'This tipster has not completed payout setup yet' })
     }
 
+    const existingSub = await prisma.subscription.findFirst({
+      where: { followerId: req.userId, tipsterId, status: 'active' }
+    })
+    if (existingSub) return res.status(409).json({ error: 'already_subscribed' })
+
     const commissionPercent = tipster.commissionOverridePercent ?? 15
 
     const session = await stripe.checkout.sessions.create({

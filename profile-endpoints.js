@@ -1,5 +1,7 @@
 'use strict'
 
+const jwt = require('jsonwebtoken')
+
 const AVATAR_MAX_BYTES = 300 * 1024
 const BANNER_MAX_BYTES = 500 * 1024
 
@@ -47,6 +49,17 @@ function registerRoutes(app, prisma, requireAuth) {
     if (!/^[a-zA-Z0-9_\-]{1,50}$/.test(username)) {
       return res.status(400).json({ error: 'Invalid username' })
     }
+
+    // Optionally identify the logged-in viewer (no auth required — anonymous = null)
+    let viewerId = null
+    const authHeader = req.headers.authorization
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET)
+        viewerId = decoded.userId
+      } catch (_) {}
+    }
+
     try {
       const rows = await prisma.$queryRaw`
         SELECT * FROM profiles WHERE username = ${username} LIMIT 1
@@ -67,7 +80,16 @@ function registerRoutes(app, prisma, requireAuth) {
         }
       }
 
-      const userRow = await prisma.user.findUnique({ where: { username }, select: { subscriptionPriceCents: true } })
+      const userRow = await prisma.user.findUnique({ where: { username }, select: { id: true, subscriptionPriceCents: true } })
+
+      // Check active subscription for the logged-in viewer (skip if anonymous or own profile)
+      let isSubscribed = false
+      if (viewerId && userRow?.id && viewerId !== userRow.id) {
+        const sub = await prisma.subscription.findFirst({
+          where: { followerId: viewerId, tipsterId: userRow.id, status: 'active' }
+        })
+        isSubscribed = !!sub
+      }
 
       return res.json({
         archetype:               archetype,
@@ -84,6 +106,7 @@ function registerRoutes(app, prisma, requireAuth) {
         avatar_b64:              p.avatar_b64 || null,
         banner_b64:              p.banner_b64 || null,
         subscriptionPriceCents:  userRow?.subscriptionPriceCents ?? null,
+        isSubscribed:            isSubscribed,
       })
     } catch (e) {
       console.error('GET /profile error:', e)
