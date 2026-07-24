@@ -69,12 +69,29 @@ app.post('/stripe-webhook',
           const meta = session.metadata || {}
           const { followerId, tipsterId } = meta
           if (!followerId || !tipsterId) break
+
+          // Retrieve subscription to get current_period_end.
+          // API 2025-03-31.basil+ moved the field from subscription root to
+          // items.data[0].current_period_end — fall back to root for older envs.
+          let currentPeriodEnd = null
+          if (session.subscription) {
+            try {
+              const stripeSub = await stripe.subscriptions.retrieve(session.subscription)
+              const periodEndTs = stripeSub.items?.data?.[0]?.current_period_end
+                               ?? stripeSub.current_period_end
+              if (periodEndTs) currentPeriodEnd = new Date(periodEndTs * 1000)
+            } catch (e) {
+              console.error('stripe.subscriptions.retrieve failed:', e.message)
+            }
+          }
+
           await prisma.subscription.upsert({
             where:  { followerId_tipsterId: { followerId, tipsterId } },
             update: {
               stripeCustomerId: session.customer,
               stripeSubId:      session.subscription,
-              status:           'active'
+              status:           'active',
+              currentPeriodEnd
             },
             create: {
               followerId,
@@ -82,11 +99,12 @@ app.post('/stripe-webhook',
               stripeCustomerId: session.customer,
               stripeSubId:      session.subscription,
               status:           'active',
-              priceAmount:      Math.round((session.amount_total || 1000) / 100),
+              currentPeriodEnd,
+              priceAmount:      session.amount_total ? Math.round(session.amount_total / 100) : null,
               currency:         session.currency || 'eur'
             }
           })
-          console.log(`💳 Subscription activated: ${followerId} → ${tipsterId}`)
+          console.log(`💳 Subscription activated: ${followerId} → ${tipsterId}, expires: ${currentPeriodEnd?.toISOString() ?? 'unknown'}`)
           break
         }
 
