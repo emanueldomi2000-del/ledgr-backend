@@ -475,6 +475,31 @@ function registerRoutes(app, prisma, requireInternal) {
     }
   })
 
+  app.get('/hall-of-fame/record-holders', async (req, res) => {
+    try {
+      const rows = await prisma.$queryRaw`SELECT * FROM user_rankings`
+      const trusted = rows.filter(r =>
+        (_n(r.wins) + _n(r.losses)) >= 100 &&
+        _n(r.sharpScore) >= 60 &&
+        _n(r.roi) > 5 &&
+        _n(r.winRate) * 100 >= 52
+      )
+      const roiLeader = trusted
+        .filter(r => _n(r.totalPicks) >= 50 && _n(r.avgOdds) >= 1.5)
+        .sort((a, b) => _n(b.roi) - _n(a.roi))[0]?.username ?? null
+      const streakKing = trusted
+        .filter(r => (_n(r.bestStreak) || 0) >= 7)
+        .sort((a, b) => _n(b.bestStreak) - _n(a.bestStreak))[0]?.username ?? null
+      const sharpElite = trusted
+        .filter(r => _n(r.totalPicks) >= 50)
+        .sort((a, b) => _n(b.sharpScore) - _n(a.sharpScore))[0]?.username ?? null
+      res.json({ roiLeader, streakKing, sharpElite })
+    } catch (e) {
+      console.error('GET /hall-of-fame/record-holders error:', e)
+      res.status(500).json({ error: 'Server error' })
+    }
+  })
+
   app.post('/internal/rankings/recalculate/:userId', requireInternal, async (req, res) => {
     const { userId } = req.params
     if (!userId) return res.status(400).json({ error: 'Invalid userId' })
