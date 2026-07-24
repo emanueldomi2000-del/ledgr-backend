@@ -445,7 +445,11 @@ app.post('/auth/register', authLimiter, async (req, res) => {
       }
     })
 
-    await sendVerificationEmail(user.email, user.username, code)
+    try {
+      await sendVerificationEmail(user.email, user.username, code)
+    } catch (emailErr) {
+      console.error('Verification email failed:', emailErr)
+    }
 
     res.json({
       message: 'Check your email to verify your account',
@@ -456,6 +460,7 @@ app.post('/auth/register', authLimiter, async (req, res) => {
       const field = err.meta?.target?.includes('email') ? 'Email' : 'Username'
       return res.status(400).json({ error: field + ' already taken' })
     }
+    console.error('Register error:', err)
     res.status(500).json({ error: 'Server error — try again' })
   }
 })
@@ -524,6 +529,9 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     if (!user) return res.status(400).json({ error: 'No account found with this email' })
     const valid = await bcrypt.compare(password, user.password)
     if (!valid) return res.status(400).json({ error: 'Wrong password' })
+    if (!user.emailVerified) {
+      return res.status(403).json({ error: 'verify_email', email: user.email })
+    }
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '90d' })
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } })
   } catch (err) {
