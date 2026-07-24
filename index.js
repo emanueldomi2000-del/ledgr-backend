@@ -40,6 +40,106 @@ const prisma = new PrismaClient()
 app.set('trust proxy', 1)
 
 app.use(cors())
+
+// ── STRIPE ────────────────────────────────────────────────────
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder')
+
+// Webhook MUST be registered before express.json() — needs raw body for signature verification
+app.post('/stripe-webhook',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const secret = process.env.STRIPE_WEBHOOK_SECRET
+    if (!secret) {
+      console.error('STRIPE_WEBHOOK_SECRET missing — refusing unverified webhook')
+      return res.status(500).json({ error: 'Webhook not configured' })
+    }
+    const sig = req.headers['stripe-signature']
+    let event
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, secret)
+    } catch (err) {
+      console.error('Webhook signature error:', err.message)
+      return res.status(400).json({ error: 'Webhook signature invalid' })
+    }
+
+    try {
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object
+          if (session.mode !== 'subscription') break
+          const meta = session.metadata || {}
+          const { followerId, tipsterId } = meta
+          if (!followerId || !tipsterId) break
+          await prisma.subscription.upsert({
+            where:  { followerId_tipsterId: { followerId, tipsterId } },
+            update: {
+              stripeCustomerId: session.customer,
+              stripeSubId:      session.subscription,
+              status:           'active'
+            },
+            create: {
+              followerId,
+              tipsterId,
+              stripeCustomerId: session.customer,
+              stripeSubId:      session.subscription,
+              status:           'active',
+              priceAmount:      Math.round((session.amount_total || 1000) / 100),
+              currency:         session.currency || 'eur'
+            }
+          })
+          console.log(`💳 Subscription activated: ${followerId} → ${tipsterId}`)
+          break
+        }
+
+        case 'invoice.payment_succeeded': {
+          const inv = event.data.object
+          if (!inv.subscription) break
+          const periodEnd = new Date(inv.lines?.data?.[0]?.period?.end * 1000 || Date.now())
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: inv.subscription },
+            data:  { status: 'active', currentPeriodEnd: periodEnd }
+          })
+          break
+        }
+
+        case 'invoice.payment_failed': {
+          const inv = event.data.object
+          if (!inv.subscription) break
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: inv.subscription },
+            data:  { status: 'past_due' }
+          })
+          break
+        }
+
+        case 'customer.subscription.deleted': {
+          const sub = event.data.object
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: sub.id },
+            data:  { status: 'cancelled' }
+          })
+          console.log(`❌ Subscription cancelled: ${sub.id}`)
+          break
+        }
+
+        case 'customer.subscription.updated': {
+          const sub = event.data.object
+          const periodEnd = new Date(sub.current_period_end * 1000)
+          await prisma.subscription.updateMany({
+            where: { stripeSubId: sub.id },
+            data:  { status: sub.status, currentPeriodEnd: periodEnd }
+          })
+          break
+        }
+      }
+    } catch (err) {
+      console.error('Webhook handler error:', err.message)
+    }
+
+    res.json({ received: true })
+  }
+)
+
 app.use(express.json())
 
 // ── RATE LIMITERS ─────────────────────────────────────────────
@@ -909,103 +1009,6 @@ app.get('/players', async (req, res) => {
   }
 })
 
-// ── STRIPE ────────────────────────────────────────────────────
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder')
-
-// Webhook must receive the raw body — register before express.json() parses it
-app.post('/stripe-webhook',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    const sig     = req.headers['stripe-signature']
-    const secret  = process.env.STRIPE_WEBHOOK_SECRET
-
-    let event
-    try {
-      event = secret
-        ? stripe.webhooks.constructEvent(req.body, sig, secret)
-        : JSON.parse(req.body.toString())   // dev fallback: no signature check
-    } catch (err) {
-      console.error('Webhook signature error:', err.message)
-      return res.status(400).json({ error: 'Webhook signature invalid' })
-    }
-
-    try {
-      switch (event.type) {
-        case 'checkout.session.completed': {
-          const session = event.data.object
-          if (session.mode !== 'subscription') break
-          const meta = session.metadata || {}
-          const { followerId, tipsterId } = meta
-          if (!followerId || !tipsterId) break
-          await prisma.subscription.upsert({
-            where:  { followerId_tipsterId: { followerId, tipsterId } },
-            update: {
-              stripeCustomerId: session.customer,
-              stripeSubId:      session.subscription,
-              status:           'active'
-            },
-            create: {
-              followerId,
-              tipsterId,
-              stripeCustomerId: session.customer,
-              stripeSubId:      session.subscription,
-              status:           'active',
-              priceAmount:      Math.round((session.amount_total || 1000) / 100),
-              currency:         session.currency || 'eur'
-            }
-          })
-          console.log(`💳 Subscription activated: ${followerId} → ${tipsterId}`)
-          break
-        }
-
-        case 'invoice.payment_succeeded': {
-          const inv = event.data.object
-          if (!inv.subscription) break
-          const periodEnd = new Date(inv.lines?.data?.[0]?.period?.end * 1000 || Date.now())
-          await prisma.subscription.updateMany({
-            where: { stripeSubId: inv.subscription },
-            data:  { status: 'active', currentPeriodEnd: periodEnd }
-          })
-          break
-        }
-
-        case 'invoice.payment_failed': {
-          const inv = event.data.object
-          if (!inv.subscription) break
-          await prisma.subscription.updateMany({
-            where: { stripeSubId: inv.subscription },
-            data:  { status: 'past_due' }
-          })
-          break
-        }
-
-        case 'customer.subscription.deleted': {
-          const sub = event.data.object
-          await prisma.subscription.updateMany({
-            where: { stripeSubId: sub.id },
-            data:  { status: 'cancelled' }
-          })
-          console.log(`❌ Subscription cancelled: ${sub.id}`)
-          break
-        }
-
-        case 'customer.subscription.updated': {
-          const sub = event.data.object
-          const periodEnd = new Date(sub.current_period_end * 1000)
-          await prisma.subscription.updateMany({
-            where: { stripeSubId: sub.id },
-            data:  { status: sub.status, currentPeriodEnd: periodEnd }
-          })
-          break
-        }
-      }
-    } catch (err) {
-      console.error('Webhook handler error:', err.message)
-    }
-
-    res.json({ received: true })
-  }
-)
 
 app.patch('/profile/subscription-price', requireAuth, async (req, res) => {
   try {
