@@ -17,13 +17,14 @@ const DIVISION_THRESHOLDS = [
 ]
 
 const ARCHETYPES = [
-  { key: 'high-stakes',   test: s => s.currentStreak >= 5 || (s.sharpScore > 60 && s.roi > 30) },
-  { key: 'sharp',         test: s => s.sharpScore > 70 },
-  { key: 'data-nerd',     test: s => s.clvAvg != null && s.clvAvg > 2 && s.totalPicks >= 20 },
-  { key: 'grinder',       test: s => s.totalPicks > 100 && s.roi > 0 },
-  { key: 'underdog-king', test: s => (s.avgOdds || 0) > 3.0 && s.roi > 0 },
-  { key: 'value-hunter',  test: s => (s.avgOdds || 0) >= 2.0 && (s.avgOdds || 0) <= 3.5 && s.roi > 5 && s.totalPicks >= 10 },
-  { key: 'contender',     test: s => s.totalPicks >= 5 },
+  // Order: most restrictive first (first-match wins)
+  { key: 'high-stakes',   test: s => s.sharpScore > 60 && s.roi > 30 },                                                              // double elite: sharpScore + ROI
+  { key: 'sharp',         test: s => s.sharpScore > 70 },                                                                             // high sharpScore alone
+  { key: 'data-nerd',     test: s => s.clvAvg != null && s.clvAvg > 2 && s.totalPicks >= 20 },                                       // CLV quality, niche
+  { key: 'value-hunter',  test: s => (s.avgOdds || 0) >= 2.0 && (s.avgOdds || 0) <= 3.5 && s.roi > 5 && s.totalPicks >= 10 },       // roi>5 stricter than underdog-king
+  { key: 'underdog-king', test: s => (s.avgOdds || 0) > 3.0 && s.roi > 0 },                                                          // high-odds style, roi>0
+  { key: 'grinder',       test: s => s.totalPicks > 100 && s.roi > 0 },                                                               // volume + profitable
+  { key: 'contender',     test: s => s.totalPicks >= 5 },                                                                             // catch-all
 ]
 
 const FLOW_STATES = [
@@ -43,6 +44,7 @@ const ARCHETYPE_META = {
   'value-hunter':  { icon: '💎', name: 'The Diamond Mind',  color: '#80E8FF' },
   'grinder':       { icon: '🦈', name: 'The Shark',         color: '#5878A0' },
   'underdog-king': { icon: '🐉', name: 'The Dragon Soul',   color: '#FF3322' },
+  // 'specialist' (The Kingmaker) — no trigger in ARCHETYPES; kept for frontend/avatar compatibility
   'specialist':    { icon: '👑', name: 'The Kingmaker',     color: '#C8A000' },
   'data-nerd':     { icon: '⬡',  name: 'The Void Emperor',  color: '#8B00FF' },
   'contender':     { icon: '🥊', name: 'The Contender',     color: '#94a3b8' },
